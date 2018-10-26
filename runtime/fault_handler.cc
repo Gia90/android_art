@@ -23,7 +23,6 @@
 #include "art_method-inl.h"
 #include "base/stl_util.h"
 #include "mirror/class.h"
-#include "oat_quick_method_header.h"
 #include "sigchain.h"
 #include "thread-inl.h"
 #include "verify_object-inl.h"
@@ -147,10 +146,6 @@ void FaultManager::Shutdown() {
 }
 
 bool FaultManager::HandleFaultByOtherHandlers(int sig, siginfo_t* info, void* context) {
-  if (other_handlers_.empty()) {
-    return false;
-  }
-
   Thread* self = Thread::Current();
 
   DCHECK(self != nullptr);
@@ -330,7 +325,7 @@ bool FaultManager::IsInGeneratedCode(siginfo_t* siginfo, void* context, bool che
     return false;
   }
 
-  ArtMethod* method_obj = nullptr;
+  ArtMethod* method_obj = 0;
   uintptr_t return_pc = 0;
   uintptr_t sp = 0;
 
@@ -341,9 +336,7 @@ bool FaultManager::IsInGeneratedCode(siginfo_t* siginfo, void* context, bool che
   // If we don't have a potential method, we're outta here.
   VLOG(signals) << "potential method: " << method_obj;
   // TODO: Check linear alloc and image.
-  DCHECK_ALIGNED(ArtMethod::Size(sizeof(void*)), sizeof(void*))
-      << "ArtMethod is not pointer aligned";
-  if (method_obj == nullptr || !IsAligned<sizeof(void*)>(method_obj)) {
+  if (method_obj == 0 || !IsAligned<kObjectAlignment>(method_obj)) {
     VLOG(signals) << "no method";
     return false;
   }
@@ -353,7 +346,7 @@ bool FaultManager::IsInGeneratedCode(siginfo_t* siginfo, void* context, bool che
   // Check that the class pointer inside the object is not null and is aligned.
   // TODO: Method might be not a heap address, and GetClass could fault.
   // No read barrier because method_obj may not be a real object.
-  mirror::Class* cls = method_obj->GetDeclaringClassUnchecked<kWithoutReadBarrier>();
+  mirror::Class* cls = method_obj->GetDeclaringClassNoBarrier();
   if (cls == nullptr) {
     VLOG(signals) << "not a class";
     return false;
@@ -369,17 +362,16 @@ bool FaultManager::IsInGeneratedCode(siginfo_t* siginfo, void* context, bool che
     return false;
   }
 
-  const OatQuickMethodHeader* method_header = method_obj->GetOatQuickMethodHeader(return_pc);
-
   // We can be certain that this is a method now.  Check if we have a GC map
   // at the return PC address.
   if (true || kIsDebugBuild) {
     VLOG(signals) << "looking for dex pc for return pc " << std::hex << return_pc;
-    uint32_t sought_offset = return_pc -
-        reinterpret_cast<uintptr_t>(method_header->GetEntryPoint());
+    const void* code = Runtime::Current()->GetInstrumentation()->GetQuickCodeFor(method_obj,
+                                                                                 sizeof(void*));
+    uint32_t sought_offset = return_pc - reinterpret_cast<uintptr_t>(code);
     VLOG(signals) << "pc offset: " << std::hex << sought_offset;
   }
-  uint32_t dexpc = method_header->ToDexPc(method_obj, return_pc, false);
+  uint32_t dexpc = method_obj->ToDexPc(return_pc, false);
   VLOG(signals) << "dexpc: " << dexpc;
   return !check_dex_pc || dexpc != DexFile::kDexNoIndex;
 }
@@ -415,8 +407,9 @@ JavaStackTraceHandler::JavaStackTraceHandler(FaultManager* manager) : FaultHandl
   manager_->AddHandler(this, false);
 }
 
-bool JavaStackTraceHandler::Action(int sig ATTRIBUTE_UNUSED, siginfo_t* siginfo, void* context) {
+bool JavaStackTraceHandler::Action(int sig, siginfo_t* siginfo, void* context) {
   // Make sure that we are in the generated code, but we may not have a dex pc.
+  UNUSED(sig);
 #ifdef TEST_NESTED_SIGNAL
   bool in_generated_code = true;
 #else

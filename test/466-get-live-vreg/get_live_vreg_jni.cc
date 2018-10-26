@@ -17,7 +17,6 @@
 #include "arch/context.h"
 #include "art_method-inl.h"
 #include "jni.h"
-#include "oat_quick_method_header.h"
 #include "scoped_thread_state_change.h"
 #include "stack.h"
 #include "thread.h"
@@ -28,10 +27,10 @@ namespace {
 
 class TestVisitor : public StackVisitor {
  public:
-  TestVisitor(Thread* thread, Context* context) SHARED_REQUIRES(Locks::mutator_lock_)
+  TestVisitor(Thread* thread, Context* context) SHARED_LOCKS_REQUIRED(Locks::mutator_lock_)
       : StackVisitor(thread, context, StackVisitor::StackWalkKind::kIncludeInlinedFrames) {}
 
-  bool VisitFrame() SHARED_REQUIRES(Locks::mutator_lock_) {
+  bool VisitFrame() SHARED_LOCKS_REQUIRED(Locks::mutator_lock_) {
     ArtMethod* m = GetMethod();
     std::string m_name(m->GetName());
 
@@ -40,17 +39,13 @@ class TestVisitor : public StackVisitor {
       uint32_t value = 0;
       CHECK(GetVReg(m, 0, kIntVReg, &value));
       CHECK_EQ(value, 42u);
-    } else if (m_name.compare("$opt$noinline$testIntervalHole") == 0) {
-      uint32_t number_of_dex_registers = m->GetCodeItem()->registers_size_;
-      uint32_t dex_register_of_first_parameter = number_of_dex_registers - 2;
+    } else if (m_name.compare("testIntervalHole") == 0) {
       found_method_ = true;
       uint32_t value = 0;
-      if (GetCurrentQuickFrame() != nullptr &&
-          GetCurrentOatQuickMethodHeader()->IsOptimized() &&
-          !Runtime::Current()->IsDebuggable()) {
-        CHECK_EQ(GetVReg(m, dex_register_of_first_parameter, kIntVReg, &value), false);
+      if (m->IsOptimized(sizeof(void*))) {
+        CHECK_EQ(GetVReg(m, 0, kIntVReg, &value), false);
       } else {
-        CHECK(GetVReg(m, dex_register_of_first_parameter, kIntVReg, &value));
+        CHECK(GetVReg(m, 0, kIntVReg, &value));
         CHECK_EQ(value, 1u);
       }
     }

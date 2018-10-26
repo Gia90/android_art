@@ -91,7 +91,6 @@ public class Main {
                      * is an error we can't recover from.
                      */
                     meth.invoke(dexFile, name, this);
-                    System.out.println("Unreachable");
                 } finally {
                     if (dexFile != null) {
                         /* close the DexFile to make CloseGuard happy */
@@ -156,12 +155,6 @@ public class Main {
      * See if we can GC after a failed load.
      */
     static void testFailLoadAndGc() throws TestFailed {
-        processFailLoadAndGc();
-        Runtime.getRuntime().gc();
-        System.out.println("GC complete.");
-    }
-
-    private static void processFailLoadAndGc() throws TestFailed {
         try {
             BrokenDexLoader loader;
 
@@ -177,5 +170,7 @@ public class Main {
                 ite.printStackTrace();
             }
         }
+        Runtime.getRuntime().gc();
+        System.out.println("GC complete.");
     }
 }

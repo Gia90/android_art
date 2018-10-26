@@ -12,6 +12,9 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Modified by Intel Corporation
+ *
  */
 
 #include "code_generator_utils.h"
@@ -95,8 +98,19 @@ void CalculateMagicAndShiftForDivRem(int64_t divisor, bool is_long,
   *shift = is_long ? p - 64 : p - 32;
 }
 
-bool IsBooleanValueOrMaterializedCondition(HInstruction* cond_input) {
-  return !cond_input->IsCondition() || !cond_input->IsEmittedAtUseSite();
+// Is it valid to reverse the condition? Uses the values supplied to
+// GenerateTestAndBranch() in instruction generators.
+bool CanReverseCondition(Label* always_true_target,
+                         Label* false_target,
+                         HCondition* condition) {
+  // 'always_true_target' is null when the 'true' path is to the next
+  // block to be generated.  Check the type of the condition to ensure that
+  // FP conditions are not swapped.  This is for future fusing of HCompare and
+  // HCondition.
+  // Note:  If the condition is nullptr, then it is always okay to reverse.
+  return always_true_target == nullptr && false_target != nullptr &&
+         (condition == nullptr ||
+          !Primitive::IsFloatingPointType(condition->InputAt(0)->GetType()));
 }
 
 }  // namespace art

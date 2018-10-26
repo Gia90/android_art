@@ -19,10 +19,7 @@
 
 #include <memory.h>
 #include <map>
-#include <type_traits>
 #include <utility>
-
-#include "base/stl_util.h"
 
 namespace art {
 
@@ -260,7 +257,8 @@ struct VariantMap {
     if (ptr != nullptr) {
       return std::move(*ptr);
     } else {
-      return key.CreateDefaultValue();
+      TValue default_value = key.CreateDefaultValue();
+      return std::move(default_value);
     }
   }
 
@@ -271,9 +269,8 @@ struct VariantMap {
   }
 
   // Set a value for a given key, overwriting the previous value if any.
-  // Note: Omit the `value` from TValue type deduction, deduce only from the `key` argument.
   template <typename TValue>
-  void Set(const TKey<TValue>& key, const typename Identity<TValue>::type& value) {
+  void Set(const TKey<TValue>& key, const TValue& value) {
     // Clone the value first, to protect against &value == GetValuePtr(key).
     auto* new_value = new TValue(value);
 
@@ -283,9 +280,8 @@ struct VariantMap {
 
   // Set a value for a given key, only if there was no previous value before.
   // Returns true if the value was set, false if a previous value existed.
-  // Note: Omit the `value` from TValue type deduction, deduce only from the `key` argument.
   template <typename TValue>
-  bool SetIfMissing(const TKey<TValue>& key, const typename Identity<TValue>::type& value) {
+  bool SetIfMissing(const TKey<TValue>& key, const TValue& value) {
     TValue* ptr = Get(key);
     if (ptr == nullptr) {
       Set(key, value);

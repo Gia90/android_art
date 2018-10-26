@@ -34,15 +34,12 @@ namespace mirror {
 class MANAGED AbstractMethod : public AccessibleObject {
  public:
   // Called from Constructor::CreateFromArtMethod, Method::CreateFromArtMethod.
-  template <bool kTransactionActive = false>
-  bool CreateFromArtMethod(ArtMethod* method) SHARED_REQUIRES(Locks::mutator_lock_)
-      REQUIRES(!Roles::uninterruptible_);
+  bool CreateFromArtMethod(ArtMethod* method) SHARED_LOCKS_REQUIRED(Locks::mutator_lock_);
 
-  ArtMethod* GetArtMethod() SHARED_REQUIRES(Locks::mutator_lock_);
+  ArtMethod* GetArtMethod() SHARED_LOCKS_REQUIRED(Locks::mutator_lock_);
   // Only used by the image writer.
-  template <bool kTransactionActive = false>
-  void SetArtMethod(ArtMethod* method) SHARED_REQUIRES(Locks::mutator_lock_);
-  mirror::Class* GetDeclaringClass() SHARED_REQUIRES(Locks::mutator_lock_);
+  void SetArtMethod(ArtMethod* method) SHARED_LOCKS_REQUIRED(Locks::mutator_lock_);
+  mirror::Class* GetDeclaringClass() SHARED_LOCKS_REQUIRED(Locks::mutator_lock_);
 
  private:
   static MemberOffset ArtMethodOffset() {
@@ -63,8 +60,9 @@ class MANAGED AbstractMethod : public AccessibleObject {
 
   HeapReference<mirror::Class> declaring_class_;
   HeapReference<mirror::Class> declaring_class_of_overridden_method_;
-  uint32_t access_flags_;
+  uint32_t padding_;
   uint64_t art_method_;
+  uint32_t access_flags_;
   uint32_t dex_method_index_;
 
   friend struct art::AbstractMethodOffsets;  // for verifying offset information

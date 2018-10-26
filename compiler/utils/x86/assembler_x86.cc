@@ -12,6 +12,9 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Modified by Intel Corporation
+ *
  */
 
 #include "assembler_x86.h"
@@ -158,50 +161,6 @@ void X86Assembler::bswapl(Register dst) {
   EmitUint8(0xC8 + dst);
 }
 
-void X86Assembler::bsfl(Register dst, Register src) {
-  AssemblerBuffer::EnsureCapacity ensured(&buffer_);
-  EmitUint8(0x0F);
-  EmitUint8(0xBC);
-  EmitRegisterOperand(dst, src);
-}
-
-void X86Assembler::bsfl(Register dst, const Address& src) {
-  AssemblerBuffer::EnsureCapacity ensured(&buffer_);
-  EmitUint8(0x0F);
-  EmitUint8(0xBC);
-  EmitOperand(dst, src);
-}
-
-void X86Assembler::bsrl(Register dst, Register src) {
-  AssemblerBuffer::EnsureCapacity ensured(&buffer_);
-  EmitUint8(0x0F);
-  EmitUint8(0xBD);
-  EmitRegisterOperand(dst, src);
-}
-
-void X86Assembler::bsrl(Register dst, const Address& src) {
-  AssemblerBuffer::EnsureCapacity ensured(&buffer_);
-  EmitUint8(0x0F);
-  EmitUint8(0xBD);
-  EmitOperand(dst, src);
-}
-
-void X86Assembler::popcntl(Register dst, Register src) {
-  AssemblerBuffer::EnsureCapacity ensured(&buffer_);
-  EmitUint8(0xF3);
-  EmitUint8(0x0F);
-  EmitUint8(0xB8);
-  EmitRegisterOperand(dst, src);
-}
-
-void X86Assembler::popcntl(Register dst, const Address& src) {
-  AssemblerBuffer::EnsureCapacity ensured(&buffer_);
-  EmitUint8(0xF3);
-  EmitUint8(0x0F);
-  EmitUint8(0xB8);
-  EmitOperand(dst, src);
-}
-
 void X86Assembler::movzxb(Register dst, ByteRegister src) {
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0x0F);
@@ -323,14 +282,6 @@ void X86Assembler::cmovl(Condition condition, Register dst, Register src) {
   EmitUint8(0x0F);
   EmitUint8(0x40 + condition);
   EmitRegisterOperand(dst, src);
-}
-
-
-void X86Assembler::cmovl(Condition condition, Register dst, const Address& src) {
-  AssemblerBuffer::EnsureCapacity ensured(&buffer_);
-  EmitUint8(0x0F);
-  EmitUint8(0x40 + condition);
-  EmitOperand(dst, src);
 }
 
 
@@ -1222,6 +1173,19 @@ void X86Assembler::adcl(Register dst, const Address& address) {
 }
 
 
+void X86Assembler::adcl(const Address& address, Register reg) {
+  AssemblerBuffer::EnsureCapacity ensured(&buffer_);
+  EmitUint8(0x11);
+  EmitOperand(reg, address);
+}
+
+
+void X86Assembler::adcl(const Address& address, const Immediate& imm) {
+  AssemblerBuffer::EnsureCapacity ensured(&buffer_);
+  EmitComplex(2, address, imm);
+}
+
+
 void X86Assembler::subl(Register dst, Register src) {
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0x2B);
@@ -1246,6 +1210,12 @@ void X86Assembler::subl(const Address& address, Register reg) {
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0x29);
   EmitOperand(reg, address);
+}
+
+
+void X86Assembler::subl(const Address& address, const Immediate& imm) {
+  AssemblerBuffer::EnsureCapacity ensured(&buffer_);
+  EmitComplex(5, address, imm);
 }
 
 
@@ -1353,6 +1323,12 @@ void X86Assembler::sbbl(const Address& address, Register src) {
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0x19);
   EmitOperand(src, address);
+}
+
+
+void X86Assembler::sbbl(const Address& address, const Immediate& imm) {
+  AssemblerBuffer::EnsureCapacity ensured(&buffer_);
+  EmitComplex(3, address, imm);
 }
 
 
@@ -1475,26 +1451,6 @@ void X86Assembler::shrd(Register dst, Register src, const Immediate& imm) {
   EmitUint8(0xAC);
   EmitRegisterOperand(src, dst);
   EmitUint8(imm.value() & 0xFF);
-}
-
-
-void X86Assembler::roll(Register reg, const Immediate& imm) {
-  EmitGenericShift(0, Operand(reg), imm);
-}
-
-
-void X86Assembler::roll(Register operand, Register shifter) {
-  EmitGenericShift(0, Operand(operand), shifter);
-}
-
-
-void X86Assembler::rorl(Register reg, const Immediate& imm) {
-  EmitGenericShift(1, Operand(reg), imm);
-}
-
-
-void X86Assembler::rorl(Register operand, Register shifter) {
-  EmitGenericShift(1, Operand(operand), shifter);
 }
 
 
@@ -1668,31 +1624,16 @@ void X86Assembler::jmp(NearLabel* label) {
 
 void X86Assembler::repne_scasw() {
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
-  EmitUint8(0x66);
   EmitUint8(0xF2);
-  EmitUint8(0xAF);
-}
-
-
-void X86Assembler::repe_cmpsw() {
-  AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0x66);
-  EmitUint8(0xF3);
-  EmitUint8(0xA7);
-}
-
-
-void X86Assembler::repe_cmpsl() {
-  AssemblerBuffer::EnsureCapacity ensured(&buffer_);
-  EmitUint8(0xF3);
-  EmitUint8(0xA7);
+  EmitUint8(0xAF);
 }
 
 
 void X86Assembler::rep_movsw() {
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
-  EmitUint8(0x66);
   EmitUint8(0xF3);
+  EmitUint8(0x66);
   EmitUint8(0xA5);
 }
 
@@ -2126,12 +2067,12 @@ void X86Assembler::LoadRef(ManagedRegister mdest, FrameOffset src) {
 }
 
 void X86Assembler::LoadRef(ManagedRegister mdest, ManagedRegister base, MemberOffset offs,
-                           bool unpoison_reference) {
+                           bool poison_reference) {
   X86ManagedRegister dest = mdest.AsX86();
   CHECK(dest.IsCpuRegister() && dest.IsCpuRegister());
   movl(dest.AsCpuRegister(), Address(base.AsX86().AsCpuRegister(), offs));
-  if (unpoison_reference) {
-    MaybeUnpoisonHeapReference(dest.AsCpuRegister());
+  if (kPoisonHeapReferences && poison_reference) {
+    negl(dest.AsCpuRegister());
   }
 }
 
@@ -2379,7 +2320,7 @@ void X86Assembler::GetCurrentThread(FrameOffset offset,
 }
 
 void X86Assembler::ExceptionPoll(ManagedRegister /*scratch*/, size_t stack_adjust) {
-  X86ExceptionSlowPath* slow = new (GetArena()) X86ExceptionSlowPath(stack_adjust);
+  X86ExceptionSlowPath* slow = new X86ExceptionSlowPath(stack_adjust);
   buffer_.EnqueueSlowPath(slow);
   fs()->cmpl(Address::Absolute(Thread::ExceptionOffset<4>()), Immediate(0));
   j(kNotEqual, slow->Entry());
@@ -2402,21 +2343,30 @@ void X86ExceptionSlowPath::Emit(Assembler *sasm) {
 }
 
 void X86Assembler::AddConstantArea() {
-  ArrayRef<const int32_t> area = constant_area_.GetBuffer();
-  // Generate the data for the literal area.
+  size_t num_zero_words = 0;
+  const std::vector<int32_t>& area = constant_area_.GetBuffer(&num_zero_words);
+  // Generate the literal area first.
   for (size_t i = 0, e = area.size(); i < e; i++) {
     AssemblerBuffer::EnsureCapacity ensured(&buffer_);
     EmitInt32(area[i]);
   }
+
+  // Generate the zero word area, with the fixups as needed.
+  const std::vector<ConstantArea::FixupInfo>& fixups = constant_area_.GetFixups();
+  auto fixup_it = fixups.begin();
+  size_t next_fixup_index = (fixup_it == fixups.end()) ? -1 : fixup_it->first;
+  for (size_t i = 0; i < num_zero_words; i++) {
+    AssemblerBuffer::EnsureCapacity ensured(&buffer_);
+    if (i == next_fixup_index) {
+      EmitFixup(fixup_it->second);
+      fixup_it++;
+      next_fixup_index = (fixup_it == fixups.end()) ? -1 : fixup_it->first;
+    }
+    EmitInt32(0);
+  }
 }
 
-size_t ConstantArea::AppendInt32(int32_t v) {
-  size_t result = buffer_.size() * elem_size_;
-  buffer_.push_back(v);
-  return result;
-}
-
-size_t ConstantArea::AddInt32(int32_t v) {
+int ConstantArea::AddInt32(int32_t v) {
   for (size_t i = 0, e = buffer_.size(); i < e; i++) {
     if (v == buffer_[i]) {
       return i * elem_size_;
@@ -2424,12 +2374,14 @@ size_t ConstantArea::AddInt32(int32_t v) {
   }
 
   // Didn't match anything.
-  return AppendInt32(v);
+  int result = buffer_.size() * elem_size_;
+  buffer_.push_back(v);
+  return result;
 }
 
-size_t ConstantArea::AddInt64(int64_t v) {
-  int32_t v_low = Low32Bits(v);
-  int32_t v_high = High32Bits(v);
+int ConstantArea::AddInt64(int64_t v) {
+  int32_t v_low = v;
+  int32_t v_high = v >> 32;
   if (buffer_.size() > 1) {
     // Ensure we don't pass the end of the buffer.
     for (size_t i = 0, e = buffer_.size() - 1; i < e; i++) {
@@ -2440,18 +2392,18 @@ size_t ConstantArea::AddInt64(int64_t v) {
   }
 
   // Didn't match anything.
-  size_t result = buffer_.size() * elem_size_;
+  int result = buffer_.size() * elem_size_;
   buffer_.push_back(v_low);
   buffer_.push_back(v_high);
   return result;
 }
 
-size_t ConstantArea::AddDouble(double v) {
+int ConstantArea::AddDouble(double v) {
   // Treat the value as a 64-bit integer value.
   return AddInt64(bit_cast<int64_t, double>(v));
 }
 
-size_t ConstantArea::AddFloat(float v) {
+int ConstantArea::AddFloat(float v) {
   // Treat the value as a 32-bit integer value.
   return AddInt32(bit_cast<int32_t, float>(v));
 }

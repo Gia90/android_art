@@ -125,6 +125,7 @@ class PhantomWrapper extends PhantomReference {
  */
 class BitmapWatcher extends Thread {
     ReferenceQueue<PhantomWrapper> mQueue;
+    volatile boolean mQuit = false;
 
     BitmapWatcher(ReferenceQueue<PhantomWrapper> queue) {
         mQueue = queue;
@@ -132,7 +133,7 @@ class BitmapWatcher extends Thread {
     }
 
     public void run() {
-        while (true) {
+        while (!mQuit) {
             try {
                 PhantomWrapper ref = (PhantomWrapper) mQueue.remove();
                 //System.out.println("dequeued ref " + ref.mNativeData +
@@ -141,12 +142,12 @@ class BitmapWatcher extends Thread {
                 //ref.clear();
             } catch (InterruptedException ie) {
                 System.out.println("intr");
-                break;
             }
         }
     }
 
     public void shutDown() {
+        mQuit = true;
         interrupt();
     }
 }

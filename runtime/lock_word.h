@@ -12,6 +12,9 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Modified by Intel Corporation
+ *
  */
 
 #ifndef ART_RUNTIME_LOCK_WORD_H_
@@ -118,7 +121,7 @@ class LockWord {
   }
 
   static LockWord FromForwardingAddress(size_t target) {
-    DCHECK_ALIGNED(target, (1 << kStateSize));
+    DCHECK(IsAligned < 1 << kStateSize>(target));
     return LockWord((target >> kStateSize) | (kStateForwardingAddress << kStateShift));
   }
 
@@ -197,7 +200,7 @@ class LockWord {
   size_t ForwardingAddress() const;
 
   // Constructor a lock word for inflation to use a Monitor.
-  LockWord(Monitor* mon, uint32_t rb_state);
+  explicit LockWord(Monitor* mon, uint32_t rb_state);
 
   // Return the hash code stored in the lock word, must be kHashCode state.
   int32_t GetHashCode() const;
@@ -208,10 +211,6 @@ class LockWord {
       return lw1.GetValue() == lw2.GetValue();
     }
     return lw1.GetValueWithoutReadBarrierState() == lw2.GetValueWithoutReadBarrierState();
-  }
-
-  void Dump(std::ostream& os) {
-    os << "LockWord:" << std::hex << value_;
   }
 
  private:

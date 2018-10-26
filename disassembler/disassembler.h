@@ -31,23 +31,16 @@ class DisassemblerOptions {
   // Should the disassembler print absolute or relative addresses.
   const bool absolute_addresses_;
 
-  // Base address for calculating relative code offsets when absolute_addresses_ is false.
+  // Base addess for calculating relative code offsets when absolute_addresses_ is false.
   const uint8_t* const base_address_;
-
-  // End address (exclusive);
-  const uint8_t* const end_address_;
 
   // If set, the disassembler is allowed to look at load targets in literal
   // pools.
   const bool can_read_literals_;
 
-  DisassemblerOptions(bool absolute_addresses,
-                      const uint8_t* base_address,
-                      const uint8_t* end_address,
+  DisassemblerOptions(bool absolute_addresses, const uint8_t* base_address,
                       bool can_read_literals)
-      : absolute_addresses_(absolute_addresses),
-        base_address_(base_address),
-        end_address_(end_address),
+      : absolute_addresses_(absolute_addresses), base_address_(base_address),
         can_read_literals_(can_read_literals) {}
 
  private:
@@ -70,10 +63,6 @@ class Disassembler {
   // Dump instructions within a range.
   virtual void Dump(std::ostream& os, const uint8_t* begin, const uint8_t* end) = 0;
 
-  const DisassemblerOptions* GetDisassemblerOptions() const {
-    return disassembler_options_;
-  }
-
  protected:
   explicit Disassembler(DisassemblerOptions* disassembler_options)
       : disassembler_options_(disassembler_options) {
@@ -90,9 +79,6 @@ class Disassembler {
 static inline bool HasBitSet(uint32_t value, uint32_t bit) {
   return (value & (1 << bit)) != 0;
 }
-
-extern "C"
-Disassembler* create_disassembler(InstructionSet instruction_set, DisassemblerOptions* options);
 
 }  // namespace art
 

@@ -22,11 +22,9 @@
 
 namespace art {
 
-namespace jit {
-  class JitCodeCache;
-}
-
 class ArtMethod;
+class Backend;
+struct CompilationUnit;
 class CompilerDriver;
 class CompiledMethod;
 class OatWriter;
@@ -44,7 +42,8 @@ class Compiler {
 
   virtual void UnInit() const = 0;
 
-  virtual bool CanCompileMethod(uint32_t method_idx, const DexFile& dex_file) const = 0;
+  virtual bool CanCompileMethod(uint32_t method_idx, const DexFile& dex_file, CompilationUnit* cu)
+      const = 0;
 
   virtual CompiledMethod* Compile(const DexFile::CodeItem* code_item,
                                   uint32_t access_flags,
@@ -52,27 +51,20 @@ class Compiler {
                                   uint16_t class_def_idx,
                                   uint32_t method_idx,
                                   jobject class_loader,
-                                  const DexFile& dex_file,
-                                  Handle<mirror::DexCache> dex_cache) const = 0;
+                                  const DexFile& dex_file) const = 0;
 
   virtual CompiledMethod* JniCompile(uint32_t access_flags,
                                      uint32_t method_idx,
                                      const DexFile& dex_file) const = 0;
 
-  virtual bool JitCompile(Thread* self ATTRIBUTE_UNUSED,
-                          jit::JitCodeCache* code_cache ATTRIBUTE_UNUSED,
-                          ArtMethod* method ATTRIBUTE_UNUSED,
-                          bool osr ATTRIBUTE_UNUSED)
-      SHARED_REQUIRES(Locks::mutator_lock_) {
-    return false;
-  }
-
   virtual uintptr_t GetEntryPointOf(ArtMethod* method) const
-     SHARED_REQUIRES(Locks::mutator_lock_) = 0;
+     SHARED_LOCKS_REQUIRED(Locks::mutator_lock_) = 0;
 
   uint64_t GetMaximumCompilationTimeBeforeWarning() const {
     return maximum_compilation_time_before_warning_;
   }
+
+  virtual void InitCompilationUnit(CompilationUnit& cu) const = 0;
 
   virtual ~Compiler() {}
 
@@ -84,8 +76,9 @@ class Compiler {
    * information.
    * @note This is used for backtrace information in generated code.
    */
-  virtual std::vector<uint8_t>* GetCallFrameInformationInitialization(
-      const CompilerDriver& driver ATTRIBUTE_UNUSED) const {
+  virtual std::vector<uint8_t>* GetCallFrameInformationInitialization(const CompilerDriver& driver)
+      const {
+    UNUSED(driver);
     return nullptr;
   }
 
@@ -96,7 +89,7 @@ class Compiler {
                                  const DexFile& dex_file);
 
  protected:
-  Compiler(CompilerDriver* driver, uint64_t warning) :
+  explicit Compiler(CompilerDriver* driver, uint64_t warning) :
       driver_(driver), maximum_compilation_time_before_warning_(warning) {
   }
 

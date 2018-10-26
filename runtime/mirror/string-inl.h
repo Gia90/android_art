@@ -18,10 +18,8 @@
 #define ART_RUNTIME_MIRROR_STRING_INL_H_
 
 #include "array.h"
-#include "base/bit_utils.h"
 #include "class.h"
 #include "gc/heap-inl.h"
-#include "globals.h"
 #include "intern_table.h"
 #include "runtime.h"
 #include "string.h"
@@ -33,13 +31,8 @@ namespace art {
 namespace mirror {
 
 inline uint32_t String::ClassSize(size_t pointer_size) {
-  uint32_t vtable_entries = Object::kVTableLength + 56;
-  if (IsSamsungROM()) {
-    // Samsung added a new String.clear() method.
-    // Increase vtable length to support it.
-    vtable_entries++;
-  }
-  return Class::ComputeClassSize(true, vtable_entries, 0, 0, 0, 1, 2, pointer_size);
+  uint32_t vtable_entries = Object::kVTableLength + 52;
+  return Class::ComputeClassSize(true, vtable_entries, 0, 1, 0, 1, 2, pointer_size);
 }
 
 // Sets string count in the allocation code path to ensure it is guarded by a CAS.
@@ -49,7 +42,7 @@ class SetStringCountVisitor {
   }
 
   void operator()(Object* obj, size_t usable_size ATTRIBUTE_UNUSED) const
-      SHARED_REQUIRES(Locks::mutator_lock_) {
+      SHARED_LOCKS_REQUIRED(Locks::mutator_lock_) {
     // Avoid AsString as object is not yet in live bitmap or allocation stack.
     String* string = down_cast<String*>(obj);
     string->SetCount(count_);
@@ -68,7 +61,7 @@ class SetStringCountAndBytesVisitor {
   }
 
   void operator()(Object* obj, size_t usable_size ATTRIBUTE_UNUSED) const
-      SHARED_REQUIRES(Locks::mutator_lock_) {
+      SHARED_LOCKS_REQUIRED(Locks::mutator_lock_) {
     // Avoid AsString as object is not yet in live bitmap or allocation stack.
     String* string = down_cast<String*>(obj);
     string->SetCount(count_);
@@ -95,7 +88,7 @@ class SetStringCountAndValueVisitorFromCharArray {
   }
 
   void operator()(Object* obj, size_t usable_size ATTRIBUTE_UNUSED) const
-      SHARED_REQUIRES(Locks::mutator_lock_) {
+      SHARED_LOCKS_REQUIRED(Locks::mutator_lock_) {
     // Avoid AsString as object is not yet in live bitmap or allocation stack.
     String* string = down_cast<String*>(obj);
     string->SetCount(count_);
@@ -118,7 +111,7 @@ class SetStringCountAndValueVisitorFromString {
   }
 
   void operator()(Object* obj, size_t usable_size ATTRIBUTE_UNUSED) const
-      SHARED_REQUIRES(Locks::mutator_lock_) {
+      SHARED_LOCKS_REQUIRED(Locks::mutator_lock_) {
     // Avoid AsString as object is not yet in live bitmap or allocation stack.
     String* string = down_cast<String*>(obj);
     string->SetCount(count_);
@@ -149,46 +142,27 @@ inline uint16_t String::CharAt(int32_t index) {
 
 template<VerifyObjectFlags kVerifyFlags>
 inline size_t String::SizeOf() {
-  size_t size = sizeof(String) + (sizeof(uint16_t) * GetLength<kVerifyFlags>());
-  // String.equals() intrinsics assume zero-padding up to kObjectAlignment,
-  // so make sure the zero-padding is actually copied around if GC compaction
-  // chooses to copy only SizeOf() bytes.
-  // http://b/23528461
-  return RoundUp(size, kObjectAlignment);
+  return sizeof(String) + (sizeof(uint16_t) * GetLength<kVerifyFlags>());
 }
 
 template <bool kIsInstrumented, typename PreFenceVisitor>
 inline String* String::Alloc(Thread* self, int32_t utf16_length, gc::AllocatorType allocator_type,
                              const PreFenceVisitor& pre_fence_visitor) {
-  constexpr size_t header_size = sizeof(String);
-  static_assert(sizeof(utf16_length) <= sizeof(size_t),
-                "static_cast<size_t>(utf16_length) must not lose bits.");
-  size_t length = static_cast<size_t>(utf16_length);
-  size_t data_size = sizeof(uint16_t) * length;
+  size_t header_size = sizeof(String);
+  size_t data_size = sizeof(uint16_t) * utf16_length;
   size_t size = header_size + data_size;
-  // String.equals() intrinsics assume zero-padding up to kObjectAlignment,
-  // so make sure the allocator clears the padding as well.
-  // http://b/23528461
-  size_t alloc_size = RoundUp(size, kObjectAlignment);
   Class* string_class = GetJavaLangString();
 
   // Check for overflow and throw OutOfMemoryError if this was an unreasonable request.
-  // Do this by comparing with the maximum length that will _not_ cause an overflow.
-  constexpr size_t overflow_length = (-header_size) / sizeof(uint16_t);  // Unsigned arithmetic.
-  constexpr size_t max_alloc_length = overflow_length - 1u;
-  static_assert(IsAligned<sizeof(uint16_t)>(kObjectAlignment),
-                "kObjectAlignment must be at least as big as Java char alignment");
-  constexpr size_t max_length = RoundDown(max_alloc_length, kObjectAlignment / sizeof(uint16_t));
-  if (UNLIKELY(length > max_length)) {
+  if (UNLIKELY(size < data_size)) {
     self->ThrowOutOfMemoryError(StringPrintf("%s of length %d would overflow",
                                              PrettyDescriptor(string_class).c_str(),
                                              utf16_length).c_str());
     return nullptr;
   }
-
   gc::Heap* heap = Runtime::Current()->GetHeap();
   return down_cast<String*>(
-      heap->AllocObjectWithAllocator<kIsInstrumented, true>(self, string_class, alloc_size,
+      heap->AllocObjectWithAllocator<kIsInstrumented, true>(self, string_class, size,
                                                             allocator_type, pre_fence_visitor));
 }
 
@@ -202,13 +176,11 @@ inline String* String::AllocFromByteArray(Thread* self, int32_t byte_length,
 }
 
 template <bool kIsInstrumented>
-inline String* String::AllocFromCharArray(Thread* self, int32_t count,
+inline String* String::AllocFromCharArray(Thread* self, int32_t array_length,
                                           Handle<CharArray> array, int32_t offset,
                                           gc::AllocatorType allocator_type) {
-  // It is a caller error to have a count less than the actual array's size.
-  DCHECK_GE(array->GetLength(), count);
-  SetStringCountAndValueVisitorFromCharArray visitor(count, array, offset);
-  String* new_string = Alloc<kIsInstrumented>(self, count, allocator_type, visitor);
+  SetStringCountAndValueVisitorFromCharArray visitor(array_length, array, offset);
+  String* new_string = Alloc<kIsInstrumented>(self, array_length, allocator_type, visitor);
   return new_string;
 }
 

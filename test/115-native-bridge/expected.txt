@@ -1,3 +1,4 @@
+Code cache exists: './code_cache'.
 Native bridge initialized.
 Checking for getEnvValues.
 Ready for native bridge tests.
@@ -16,7 +17,6 @@ Test ART callbacks: all JNI function number is 11.
     name:testSignal, signature:()I, shorty:I.
     name:testZeroLengthByteBuffers, signature:()V, shorty:V.
 trampoline_JNI_OnLoad called!
-JNI_OnLoad called
 Getting trampoline for Java_Main_testFindClassOnAttachedNativeThread with shorty V.
 trampoline_Java_Main_testFindClassOnAttachedNativeThread called!
 Getting trampoline for Java_Main_testFindFieldOnAttachedNativeThreadNative with shorty V.

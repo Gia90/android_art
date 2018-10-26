@@ -17,20 +17,22 @@
 #include "graph_checker.h"
 #include "optimizing_unit_test.h"
 
+#include "gtest/gtest.h"
+
 namespace art {
 
 /**
  * Create a simple control-flow graph composed of two blocks:
  *
  *   BasicBlock 0, succ: 1
- *     0: ReturnVoid 1
+ *     0: Goto 1
  *   BasicBlock 1, pred: 0
  *     1: Exit
  */
 HGraph* CreateSimpleCFG(ArenaAllocator* allocator) {
   HGraph* graph = CreateGraph(allocator);
   HBasicBlock* entry_block = new (allocator) HBasicBlock(graph);
-  entry_block->AddInstruction(new (allocator) HReturnVoid());
+  entry_block->AddInstruction(new (allocator) HGoto());
   graph->AddBlock(entry_block);
   graph->SetEntryBlock(entry_block);
   HBasicBlock* exit_block = new (allocator) HBasicBlock(graph);
@@ -38,9 +40,9 @@ HGraph* CreateSimpleCFG(ArenaAllocator* allocator) {
   graph->AddBlock(exit_block);
   graph->SetExitBlock(exit_block);
   entry_block->AddSuccessor(exit_block);
-  graph->BuildDominatorTree();
   return graph;
 }
+
 
 static void TestCode(const uint16_t* data) {
   ArenaPool pool;
@@ -48,21 +50,34 @@ static void TestCode(const uint16_t* data) {
   HGraph* graph = CreateCFG(&allocator, data);
   ASSERT_NE(graph, nullptr);
 
-  GraphChecker graph_checker(graph);
+  GraphChecker graph_checker(&allocator, graph);
   graph_checker.Run();
   ASSERT_TRUE(graph_checker.IsValid());
 }
 
-class GraphCheckerTest : public CommonCompilerTest {};
+static void TestCodeSSA(const uint16_t* data) {
+  ArenaPool pool;
+  ArenaAllocator allocator(&pool);
+  HGraph* graph = CreateCFG(&allocator, data);
+  ASSERT_NE(graph, nullptr);
 
-TEST_F(GraphCheckerTest, ReturnVoid) {
+  graph->BuildDominatorTree();
+  graph->TransformToSsa();
+
+  SSAChecker ssa_checker(&allocator, graph);
+  ssa_checker.Run();
+  ASSERT_TRUE(ssa_checker.IsValid());
+}
+
+
+TEST(GraphChecker, ReturnVoid) {
   const uint16_t data[] = ZERO_REGISTER_CODE_ITEM(
       Instruction::RETURN_VOID);
 
   TestCode(data);
 }
 
-TEST_F(GraphCheckerTest, CFG1) {
+TEST(GraphChecker, CFG1) {
   const uint16_t data[] = ZERO_REGISTER_CODE_ITEM(
       Instruction::GOTO | 0x100,
       Instruction::RETURN_VOID);
@@ -70,7 +85,7 @@ TEST_F(GraphCheckerTest, CFG1) {
   TestCode(data);
 }
 
-TEST_F(GraphCheckerTest, CFG2) {
+TEST(GraphChecker, CFG2) {
   const uint16_t data[] = ONE_REGISTER_CODE_ITEM(
     Instruction::CONST_4 | 0 | 0,
     Instruction::IF_EQ, 3,
@@ -80,7 +95,7 @@ TEST_F(GraphCheckerTest, CFG2) {
   TestCode(data);
 }
 
-TEST_F(GraphCheckerTest, CFG3) {
+TEST(GraphChecker, CFG3) {
   const uint16_t data[] = ONE_REGISTER_CODE_ITEM(
     Instruction::CONST_4 | 0 | 0,
     Instruction::IF_EQ, 3,
@@ -92,12 +107,12 @@ TEST_F(GraphCheckerTest, CFG3) {
 
 // Test case with an invalid graph containing inconsistent
 // predecessor/successor arcs in CFG.
-TEST_F(GraphCheckerTest, InconsistentPredecessorsAndSuccessors) {
+TEST(GraphChecker, InconsistentPredecessorsAndSuccessors) {
   ArenaPool pool;
   ArenaAllocator allocator(&pool);
 
   HGraph* graph = CreateSimpleCFG(&allocator);
-  GraphChecker graph_checker(graph);
+  GraphChecker graph_checker(&allocator, graph);
   graph_checker.Run();
   ASSERT_TRUE(graph_checker.IsValid());
 
@@ -110,12 +125,12 @@ TEST_F(GraphCheckerTest, InconsistentPredecessorsAndSuccessors) {
 
 // Test case with an invalid graph containing a non-branch last
 // instruction in a block.
-TEST_F(GraphCheckerTest, BlockEndingWithNonBranchInstruction) {
+TEST(GraphChecker, BlockEndingWithNonBranchInstruction) {
   ArenaPool pool;
   ArenaAllocator allocator(&pool);
 
   HGraph* graph = CreateSimpleCFG(&allocator);
-  GraphChecker graph_checker(graph);
+  GraphChecker graph_checker(&allocator, graph);
   graph_checker.Run();
   ASSERT_TRUE(graph_checker.IsValid());
 
@@ -130,7 +145,7 @@ TEST_F(GraphCheckerTest, BlockEndingWithNonBranchInstruction) {
   ASSERT_FALSE(graph_checker.IsValid());
 }
 
-TEST_F(GraphCheckerTest, SSAPhi) {
+TEST(SSAChecker, SSAPhi) {
   // This code creates one Phi function during the conversion to SSA form.
   const uint16_t data[] = ONE_REGISTER_CODE_ITEM(
     Instruction::CONST_4 | 0 | 0,
@@ -138,7 +153,7 @@ TEST_F(GraphCheckerTest, SSAPhi) {
     Instruction::CONST_4 | 4 << 12 | 0,
     Instruction::RETURN | 0 << 8);
 
-  TestCode(data);
+  TestCodeSSA(data);
 }
 
 }  // namespace art

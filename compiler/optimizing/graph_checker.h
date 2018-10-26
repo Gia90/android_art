@@ -26,52 +26,31 @@ namespace art {
 // A control-flow graph visitor performing various checks.
 class GraphChecker : public HGraphDelegateVisitor {
  public:
-  explicit GraphChecker(HGraph* graph, const char* dump_prefix = "art::GraphChecker: ")
+  GraphChecker(ArenaAllocator* allocator, HGraph* graph,
+               const char* dump_prefix = "art::GraphChecker: ")
     : HGraphDelegateVisitor(graph),
-      errors_(graph->GetArena()->Adapter(kArenaAllocGraphChecker)),
+      allocator_(allocator),
       dump_prefix_(dump_prefix),
-      seen_ids_(graph->GetArena(),
-                graph->GetCurrentInstructionId(),
-                false,
-                kArenaAllocGraphChecker),
-      blocks_storage_(graph->GetArena()->Adapter(kArenaAllocGraphChecker)),
-      visited_storage_(graph->GetArena(), 0u, true, kArenaAllocGraphChecker) {}
+      seen_ids_(allocator, graph->GetCurrentInstructionId(), false) {}
 
-  // Check the whole graph (in reverse post-order).
-  void Run() {
-    // VisitReversePostOrder is used instead of VisitInsertionOrder,
-    // as the latter might visit dead blocks removed by the dominator
-    // computation.
-    VisitReversePostOrder();
-  }
+  // Check the whole graph (in insertion order).
+  virtual void Run() { VisitInsertionOrder(); }
 
+  // Check `block`.
   void VisitBasicBlock(HBasicBlock* block) OVERRIDE;
 
+  // Check `instruction`.
   void VisitInstruction(HInstruction* instruction) OVERRIDE;
-  void VisitPhi(HPhi* phi) OVERRIDE;
 
-  void VisitBinaryOperation(HBinaryOperation* op) OVERRIDE;
-  void VisitBooleanNot(HBooleanNot* instruction) OVERRIDE;
-  void VisitBoundType(HBoundType* instruction) OVERRIDE;
-  void VisitBoundsCheck(HBoundsCheck* check) OVERRIDE;
-  void VisitCheckCast(HCheckCast* check) OVERRIDE;
-  void VisitCondition(HCondition* op) OVERRIDE;
-  void VisitConstant(HConstant* instruction) OVERRIDE;
-  void VisitDeoptimize(HDeoptimize* instruction) OVERRIDE;
-  void VisitIf(HIf* instruction) OVERRIDE;
-  void VisitInstanceOf(HInstanceOf* check) OVERRIDE;
+  // Perform control-flow graph checks on instruction.
   void VisitInvokeStaticOrDirect(HInvokeStaticOrDirect* invoke) OVERRIDE;
-  void VisitLoadException(HLoadException* load) OVERRIDE;
-  void VisitNeg(HNeg* instruction) OVERRIDE;
-  void VisitPackedSwitch(HPackedSwitch* instruction) OVERRIDE;
-  void VisitReturn(HReturn* ret) OVERRIDE;
-  void VisitReturnVoid(HReturnVoid* ret) OVERRIDE;
-  void VisitSelect(HSelect* instruction) OVERRIDE;
-  void VisitTryBoundary(HTryBoundary* try_boundary) OVERRIDE;
-  void VisitTypeConversion(HTypeConversion* instruction) OVERRIDE;
 
-  void HandleLoop(HBasicBlock* loop_header);
-  void HandleBooleanInput(HInstruction* instruction, size_t input_index);
+  // Check that the HasBoundsChecks() flag is set for bounds checks.
+  void VisitBoundsCheck(HBoundsCheck* check) OVERRIDE;
+
+  // Check that HCheckCast and HInstanceOf have HLoadClass as second input.
+  void VisitCheckCast(HCheckCast* check) OVERRIDE;
+  void VisitInstanceOf(HInstanceOf* check) OVERRIDE;
 
   // Was the last visit of the graph valid?
   bool IsValid() const {
@@ -79,7 +58,7 @@ class GraphChecker : public HGraphDelegateVisitor {
   }
 
   // Get the list of detected errors.
-  const ArenaVector<std::string>& GetErrors() const {
+  const std::vector<std::string>& GetErrors() const {
     return errors_;
   }
 
@@ -96,21 +75,56 @@ class GraphChecker : public HGraphDelegateVisitor {
     errors_.push_back(error);
   }
 
+  ArenaAllocator* const allocator_;
   // The block currently visited.
   HBasicBlock* current_block_ = nullptr;
   // Errors encountered while checking the graph.
-  ArenaVector<std::string> errors_;
+  std::vector<std::string> errors_;
 
  private:
   // String displayed before dumped errors.
   const char* const dump_prefix_;
   ArenaBitVector seen_ids_;
 
-  // To reduce the total arena memory allocation, we reuse the same storage.
-  ArenaVector<HBasicBlock*> blocks_storage_;
-  ArenaBitVector visited_storage_;
-
   DISALLOW_COPY_AND_ASSIGN(GraphChecker);
+};
+
+
+// An SSA graph visitor performing various checks.
+class SSAChecker : public GraphChecker {
+ public:
+  typedef GraphChecker super_type;
+
+  // TODO: There's no need to pass a separate allocator as we could get it from the graph.
+  SSAChecker(ArenaAllocator* allocator, HGraph* graph)
+    : GraphChecker(allocator, graph, "art::SSAChecker: ") {}
+
+  // Check the whole graph (in reverse post-order).
+  void Run() OVERRIDE {
+    // VisitReversePostOrder is used instead of VisitInsertionOrder,
+    // as the latter might visit dead blocks removed by the dominator
+    // computation.
+    VisitReversePostOrder();
+  }
+
+  // Perform SSA form checks on `block`.
+  void VisitBasicBlock(HBasicBlock* block) OVERRIDE;
+  // Loop-related checks from block `loop_header`.
+  void CheckLoop(HBasicBlock* loop_header);
+
+  // Perform SSA form checks on instructions.
+  void VisitInstruction(HInstruction* instruction) OVERRIDE;
+  void VisitPhi(HPhi* phi) OVERRIDE;
+  void VisitBinaryOperation(HBinaryOperation* op) OVERRIDE;
+  void VisitCondition(HCondition* op) OVERRIDE;
+  void VisitIf(HIf* instruction) OVERRIDE;
+  void VisitBooleanNot(HBooleanNot* instruction) OVERRIDE;
+  void VisitConstant(HConstant* instruction) OVERRIDE;
+
+  void HandleBooleanInput(HInstruction* instruction, size_t input_index);
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(SSAChecker);
 };
 
 }  // namespace art

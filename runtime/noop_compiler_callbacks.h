@@ -26,7 +26,8 @@ class NoopCompilerCallbacks FINAL : public CompilerCallbacks {
   NoopCompilerCallbacks() : CompilerCallbacks(CompilerCallbacks::CallbackMode::kCompileApp) {}
   ~NoopCompilerCallbacks() {}
 
-  void MethodVerified(verifier::MethodVerifier* verifier ATTRIBUTE_UNUSED) OVERRIDE {
+  bool MethodVerified(verifier::MethodVerifier* verifier ATTRIBUTE_UNUSED) OVERRIDE {
+    return true;
   }
 
   void ClassRejected(ClassReference ref ATTRIBUTE_UNUSED) OVERRIDE {}

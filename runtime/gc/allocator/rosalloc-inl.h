@@ -24,7 +24,7 @@ namespace gc {
 namespace allocator {
 
 inline ALWAYS_INLINE bool RosAlloc::ShouldCheckZeroMemory() {
-  return kCheckZeroMemory && !is_running_on_memory_tool_;
+  return kCheckZeroMemory && !running_on_valgrind_;
 }
 
 template<bool kThreadSafe>
@@ -62,6 +62,11 @@ inline bool RosAlloc::CanAllocFromThreadLocalRun(Thread* self, size_t size) {
   }
   size_t bracket_size;
   size_t idx = SizeToIndexAndBracketSize(size, &bracket_size);
+  DCHECK_EQ(idx, SizeToIndex(size));
+  DCHECK_EQ(bracket_size, IndexToBracketSize(idx));
+  DCHECK_EQ(bracket_size, bracketSizes[idx]);
+  DCHECK_LE(size, bracket_size);
+  DCHECK(size > 512 || bracket_size - size < 16);
   DCHECK_LT(idx, kNumThreadLocalSizeBrackets);
   Run* thread_local_run = reinterpret_cast<Run*>(self->GetRosAllocRun(idx));
   if (kIsDebugBuild) {
@@ -97,6 +102,27 @@ inline void* RosAlloc::AllocFromThreadLocalRun(Thread* self, size_t size,
     *bytes_allocated = bracket_size;
   }
   return slot_addr;
+}
+
+// Revoke the Thread Local Run, this is used for parallel copying.
+inline bool RosAlloc::FreeFromThreadLocalRun(Thread* self, size_t size, void* addr) {
+  DCHECK(addr != nullptr);
+  if (!IsSizeForThreadLocal(size)) {
+    return false;
+  }
+  size_t bracket_size;
+  size_t idx = SizeToIndexAndBracketSize(size, &bracket_size);
+  Run* thread_local_run = reinterpret_cast<Run*>(self->GetRosAllocRun(idx));
+  if (kIsDebugBuild) {
+    // Need the lock to prevent race conditions.
+    MutexLock mu(self, *size_bracket_locks_[idx]);
+    CHECK(non_full_runs_[idx].find(thread_local_run) == non_full_runs_[idx].end());
+    CHECK(full_runs_[idx].find(thread_local_run) == full_runs_[idx].end());
+  }
+  DCHECK(thread_local_run != nullptr);
+  DCHECK(thread_local_run->IsThreadLocal());
+  thread_local_run->FreeSlot(addr);
+  return true;
 }
 
 inline size_t RosAlloc::MaxBytesBulkAllocatedFor(size_t size) {

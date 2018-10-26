@@ -107,16 +107,14 @@ class CardTable {
   size_t Scan(SpaceBitmap<kObjectAlignment>* bitmap, uint8_t* scan_begin, uint8_t* scan_end,
               const Visitor& visitor,
               const uint8_t minimum_age = kCardDirty) const
-      REQUIRES(Locks::heap_bitmap_lock_)
-      SHARED_REQUIRES(Locks::mutator_lock_);
+      EXCLUSIVE_LOCKS_REQUIRED(Locks::heap_bitmap_lock_)
+      SHARED_LOCKS_REQUIRED(Locks::mutator_lock_);
 
   // Assertion used to check the given address is covered by the card table
   void CheckAddrIsInCardTable(const uint8_t* addr) const;
 
   // Resets all of the bytes in the card table to clean.
   void ClearCardTable();
-
-  // Clear a range of cards that covers start to end, start and end must be aligned to kCardSize.
   void ClearCardRange(uint8_t* start, uint8_t* end);
 
   // Resets all of the bytes in the card table which do not map to the image space.

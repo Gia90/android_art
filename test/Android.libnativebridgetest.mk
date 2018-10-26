@@ -13,10 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+# Modified by Intel Corporation
+#
+#
 
 LOCAL_PATH := $(call my-dir)
 
-include art/build/Android.common_build.mk
+include $(VENDOR_ART_PATH)/build/Android.common_build.mk
 
 LIBNATIVEBRIDGETEST_COMMON_SRC_FILES := \
   115-native-bridge/nativebridge.cc
@@ -44,8 +47,8 @@ define build-libnativebridgetest
   endif
   LOCAL_SRC_FILES := $(LIBNATIVEBRIDGETEST_COMMON_SRC_FILES)
   LOCAL_SHARED_LIBRARIES += libartd
-  LOCAL_C_INCLUDES += $(ART_C_INCLUDES) art/runtime
-  LOCAL_ADDITIONAL_DEPENDENCIES := art/build/Android.common_build.mk
+  LOCAL_C_INCLUDES += $(ART_C_INCLUDES) $(VENDOR_ART_PATH)/runtime
+  LOCAL_ADDITIONAL_DEPENDENCIES := $(VENDOR_ART_PATH)/build/Android.common_build.mk
   LOCAL_ADDITIONAL_DEPENDENCIES += $(LOCAL_PATH)/Android.libnativebridgetest.mk
   ifeq ($$(art_target_or_host),target)
     $(call set-target-local-clang-vars)
@@ -60,7 +63,6 @@ define build-libnativebridgetest
   else # host
     LOCAL_CLANG := $(ART_HOST_CLANG)
     LOCAL_CFLAGS := $(ART_HOST_CFLAGS) $(ART_HOST_DEBUG_CFLAGS)
-    LOCAL_ASFLAGS := $(ART_HOST_ASFLAGS)
     LOCAL_SHARED_LIBRARIES := libcutils
     LOCAL_LDLIBS := $(ART_HOST_LDLIBS) -ldl -lpthread
     ifeq ($(HOST_OS),linux)

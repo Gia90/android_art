@@ -13,11 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+# Modified by Intel Corporation
+#
+#
 
 ifndef ART_ANDROID_COMMON_PATH_MK
 ART_ANDROID_COMMON_PATH_MK := true
 
-include art/build/Android.common.mk
+include $(VENDOR_ART_PATH)/build/Android.common.mk
 
 # Directory used for dalvik-cache on device.
 ART_TARGET_DALVIK_CACHE_DIR := /data/dalvik-cache
@@ -41,7 +44,7 @@ else
 ART_HOST_TEST_DIR := /tmp/test-art-$(shell echo $$PPID)
 endif
 
-# core.oat location on the device.
+# Core.oat location on the device.
 TARGET_CORE_OAT := $(ART_TARGET_TEST_DIR)/$(DEX2OAT_TARGET_ARCH)/core.oat
 ifdef TARGET_2ND_ARCH
 2ND_TARGET_CORE_OAT := $(ART_TARGET_TEST_DIR)/$($(TARGET_2ND_ARCH_VAR_PREFIX)DEX2OAT_TARGET_ARCH)/core.oat
@@ -49,7 +52,7 @@ endif
 
 CORE_OAT_SUFFIX := .oat
 
-# core.oat locations under the out directory.
+# Core.oat locations under the out directory.
 HOST_CORE_OAT_OUT_BASE := $(HOST_OUT_JAVA_LIBRARIES)/$(ART_HOST_ARCH)/core
 ifneq ($(HOST_PREFER_32_BIT),true)
 2ND_HOST_CORE_OAT_OUT_BASE := $(HOST_OUT_JAVA_LIBRARIES)/$(2ND_ART_HOST_ARCH)/core
@@ -63,7 +66,7 @@ TARGET_CORE_OAT_OUTS :=
 
 CORE_IMG_SUFFIX := .art
 
-# core.art locations under the out directory.
+# Core.art locations under the out directory.
 HOST_CORE_IMG_OUT_BASE := $(HOST_OUT_JAVA_LIBRARIES)/$(ART_HOST_ARCH)/core
 ifneq ($(HOST_PREFER_32_BIT),true)
 2ND_HOST_CORE_IMG_OUT_BASE := $(HOST_OUT_JAVA_LIBRARIES)/$(2ND_ART_HOST_ARCH)/core
@@ -80,23 +83,16 @@ HOST_CORE_IMG_LOCATION := $(HOST_OUT_JAVA_LIBRARIES)/core.art
 TARGET_CORE_IMG_LOCATION := $(ART_TARGET_TEST_OUT)/core.art
 
 # Jar files for core.art.
-TARGET_CORE_JARS := core-oj core-libart conscrypt okhttp bouncycastle apache-xml
+TARGET_CORE_JARS := core-libart conscrypt okhttp core-junit bouncycastle
 HOST_CORE_JARS := $(addsuffix -hostdex,$(TARGET_CORE_JARS))
 
 HOST_CORE_DEX_LOCATIONS   := $(foreach jar,$(HOST_CORE_JARS),  $(HOST_OUT_JAVA_LIBRARIES)/$(jar).jar)
-ifeq ($(ART_TEST_ANDROID_ROOT),)
 TARGET_CORE_DEX_LOCATIONS := $(foreach jar,$(TARGET_CORE_JARS),/$(DEXPREOPT_BOOT_JAR_DIR)/$(jar).jar)
-else
-TARGET_CORE_DEX_LOCATIONS := $(foreach jar,$(TARGET_CORE_JARS),$(ART_TEST_ANDROID_ROOT)/framework/$(jar).jar)
-endif
 
 HOST_CORE_DEX_FILES   := $(foreach jar,$(HOST_CORE_JARS),  $(call intermediates-dir-for,JAVA_LIBRARIES,$(jar),t,COMMON)/javalib.jar)
 TARGET_CORE_DEX_FILES := $(foreach jar,$(TARGET_CORE_JARS),$(call intermediates-dir-for,JAVA_LIBRARIES,$(jar), ,COMMON)/javalib.jar)
 
 # Classpath for Jack compilation: we only need core-libart.
-HOST_JACK_CLASSPATH_DEPENDENCIES   := $(call intermediates-dir-for,JAVA_LIBRARIES,core-oj-hostdex,t,COMMON)/classes.jack $(call intermediates-dir-for,JAVA_LIBRARIES,core-libart-hostdex,t,COMMON)/classes.jack
-HOST_JACK_CLASSPATH                := $(abspath $(call intermediates-dir-for,JAVA_LIBRARIES,core-oj-hostdex,t,COMMON)/classes.jack):$(abspath $(call intermediates-dir-for,JAVA_LIBRARIES,core-libart-hostdex,t,COMMON)/classes.jack)
-TARGET_JACK_CLASSPATH_DEPENDENCIES := $(call intermediates-dir-for,JAVA_LIBRARIES,core-oj, ,COMMON)/classes.jack $(call intermediates-dir-for,JAVA_LIBRARIES,core-libart, ,COMMON)/classes.jack
-TARGET_JACK_CLASSPATH              := $(abspath $(call intermediates-dir-for,JAVA_LIBRARIES,core-oj, ,COMMON)/classes.jack):$(abspath $(call intermediates-dir-for,JAVA_LIBRARIES,core-libart, ,COMMON)/classes.jack)
-
+HOST_JACK_CLASSPATH   := $(abspath $(call intermediates-dir-for,JAVA_LIBRARIES,core-libart-hostdex,t,COMMON)/classes.jack)
+TARGET_JACK_CLASSPATH := $(abspath $(call intermediates-dir-for,JAVA_LIBRARIES,core-libart, ,COMMON)/classes.jack)
 endif # ART_ANDROID_COMMON_PATH_MK

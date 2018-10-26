@@ -12,6 +12,9 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Modified by Intel Corporation
+ *
  */
 
 #ifndef ART_RUNTIME_GC_ALLOCATOR_ROSALLOC_H_
@@ -30,6 +33,8 @@
 #include "base/bit_utils.h"
 #include "base/mutex.h"
 #include "base/logging.h"
+#include "gc/accounting/space_bitmap.h"
+#include "gc/object_byte_pair.h"
 #include "globals.h"
 #include "thread.h"
 
@@ -51,7 +56,7 @@ class RosAlloc {
     bool IsFree() const {
       return !kIsDebugBuild || magic_num_ == kMagicNumFree;
     }
-    size_t ByteSize(RosAlloc* rosalloc) const REQUIRES(rosalloc->lock_) {
+    size_t ByteSize(RosAlloc* rosalloc) const EXCLUSIVE_LOCKS_REQUIRED(rosalloc->lock_) {
       const uint8_t* fpr_base = reinterpret_cast<const uint8_t*>(this);
       size_t pm_idx = rosalloc->ToPageMapIndex(fpr_base);
       size_t byte_size = rosalloc->free_page_run_size_map_[pm_idx];
@@ -60,7 +65,7 @@ class RosAlloc {
       return byte_size;
     }
     void SetByteSize(RosAlloc* rosalloc, size_t byte_size)
-        REQUIRES(rosalloc->lock_) {
+        EXCLUSIVE_LOCKS_REQUIRED(rosalloc->lock_) {
       DCHECK_EQ(byte_size % kPageSize, static_cast<size_t>(0));
       uint8_t* fpr_base = reinterpret_cast<uint8_t*>(this);
       size_t pm_idx = rosalloc->ToPageMapIndex(fpr_base);
@@ -69,20 +74,20 @@ class RosAlloc {
     void* Begin() {
       return reinterpret_cast<void*>(this);
     }
-    void* End(RosAlloc* rosalloc) REQUIRES(rosalloc->lock_) {
+    void* End(RosAlloc* rosalloc) EXCLUSIVE_LOCKS_REQUIRED(rosalloc->lock_) {
       uint8_t* fpr_base = reinterpret_cast<uint8_t*>(this);
       uint8_t* end = fpr_base + ByteSize(rosalloc);
       return end;
     }
     bool IsLargerThanPageReleaseThreshold(RosAlloc* rosalloc)
-        REQUIRES(rosalloc->lock_) {
+        EXCLUSIVE_LOCKS_REQUIRED(rosalloc->lock_) {
       return ByteSize(rosalloc) >= rosalloc->page_release_size_threshold_;
     }
     bool IsAtEndOfSpace(RosAlloc* rosalloc)
-        REQUIRES(rosalloc->lock_) {
+        EXCLUSIVE_LOCKS_REQUIRED(rosalloc->lock_) {
       return reinterpret_cast<uint8_t*>(this) + ByteSize(rosalloc) == rosalloc->base_ + rosalloc->footprint_;
     }
-    bool ShouldReleasePages(RosAlloc* rosalloc) REQUIRES(rosalloc->lock_) {
+    bool ShouldReleasePages(RosAlloc* rosalloc) EXCLUSIVE_LOCKS_REQUIRED(rosalloc->lock_) {
       switch (rosalloc->page_release_mode_) {
         case kPageReleaseModeNone:
           return false;
@@ -99,7 +104,7 @@ class RosAlloc {
           return false;
       }
     }
-    void ReleasePages(RosAlloc* rosalloc) REQUIRES(rosalloc->lock_) {
+    void ReleasePages(RosAlloc* rosalloc) EXCLUSIVE_LOCKS_REQUIRED(rosalloc->lock_) {
       uint8_t* start = reinterpret_cast<uint8_t*>(this);
       size_t byte_size = ByteSize(rosalloc);
       DCHECK_EQ(byte_size % kPageSize, static_cast<size_t>(0));
@@ -192,7 +197,6 @@ class RosAlloc {
         Verify();
       }
       DCHECK(slot != nullptr);
-      DCHECK(slot->Next() == nullptr);
       Slot** headp = reinterpret_cast<Slot**>(&head_);
       Slot** tailp = kUseTail ? reinterpret_cast<Slot**>(&tail_) : nullptr;
       Slot* old_head = *headp;
@@ -320,6 +324,8 @@ class RosAlloc {
   // +-------------------+
   // | to_be_bulk_freed  |
   // +-------------------+
+  // | top_bitmap_idx    |
+  // +-------------------+
   // |                   |
   // | free list         |
   // |                   |
@@ -354,7 +360,7 @@ class RosAlloc {
     uint8_t is_thread_local_;           // True if this run is used as a thread-local run.
     uint8_t to_be_bulk_freed_;          // Used within BulkFree() to flag a run that's involved with a bulk free.
     uint32_t padding_ ATTRIBUTE_UNUSED;
-    // Use a tailless free list for free_list_ so that the alloc fast path does not manage the tail.
+    // Use a tailess free list for free_list_ so that the alloc fast path does not manage the tail
     SlotFreeList<false> free_list_;
     SlotFreeList<true> bulk_free_list_;
     SlotFreeList<true> thread_local_free_list_;
@@ -367,7 +373,7 @@ class RosAlloc {
     static size_t fixed_header_size() {
       return sizeof(Run);
     }
-    Slot* FirstSlot() const {
+    Slot* FirstSlot() {
       const uint8_t idx = size_bracket_idx_;
       return reinterpret_cast<Slot*>(reinterpret_cast<uintptr_t>(this) + headerSizes[idx]);
     }
@@ -407,41 +413,40 @@ class RosAlloc {
         free_list_.Add(slot);
       }
     }
-    // Merge the thread local free list to the free list.  Used when a thread-local run becomes
+    // Merge the thread local free list to the free list. Used when a thread-local run becomes
     // full.
     bool MergeThreadLocalFreeListToFreeList(bool* is_all_free_after_out);
-    // Merge the bulk free list to the free list. Used in a bulk free.
-    void MergeBulkFreeListToFreeList();
     // Merge the bulk free list to the thread local free list. In a bulk free, as a two-step
     // process, GC will first record all the slots to free in a run in the bulk free list where it
-    // can write without a lock, and later acquire a lock once per run to merge the bulk free list
-    // to the thread-local free list.
+    // cann write without a lock, and later acquire a lock once per run to merge the bulk free list
+    // to the thread-local free list
     void MergeBulkFreeListToThreadLocalFreeList();
+    void MergeBulkFreeListToFreeList();
     // Allocates a slot in a run.
     ALWAYS_INLINE void* AllocSlot();
     // Frees a slot in a run. This is used in a non-bulk free.
     void FreeSlot(void* ptr);
-    // Add the given slot to the bulk free list. Returns the bracket size.
+    // Add the given slot to the buld free list. Returns the bracket size.
     size_t AddToBulkFreeList(void* ptr);
     // Add the given slot to the thread-local free list.
     void AddToThreadLocalFreeList(void* ptr);
     // Returns true if all the slots in the run are not in use.
     bool IsAllFree() const {
-      return free_list_.Size() == numOfSlots[size_bracket_idx_];
+        return free_list_.Size() == numOfSlots[size_bracket_idx_];
     }
     // Returns the number of free slots.
     size_t NumberOfFreeSlots() {
-      return free_list_.Size();
+        return free_list_.Size();
     }
     // Returns true if all the slots in the run are in use.
     ALWAYS_INLINE bool IsFull();
     // Returns true if the bulk free list is empty.
     bool IsBulkFreeListEmpty() const {
-      return bulk_free_list_.Size() == 0;
+        return bulk_free_list_.Size() == 0;
     }
     // Returns true if the thread local free list is empty.
     bool IsThreadLocalFreeListEmpty() const {
-      return thread_local_free_list_.Size() == 0;
+        return thread_local_free_list_.Size() == 0;
     }
     // Zero the run's data.
     void ZeroData();
@@ -452,9 +457,9 @@ class RosAlloc {
     // Dump the run metadata for debugging.
     std::string Dump();
     // Verify for debugging.
-    void Verify(Thread* self, RosAlloc* rosalloc, bool running_on_memory_tool)
-        REQUIRES(Locks::mutator_lock_)
-        REQUIRES(Locks::thread_list_lock_);
+    void Verify(Thread* self, RosAlloc* rosalloc, bool running_on_valgrind)
+        EXCLUSIVE_LOCKS_REQUIRED(Locks::mutator_lock_)
+        EXCLUSIVE_LOCKS_REQUIRED(Locks::thread_list_lock_);
 
    private:
     // The common part of AddToBulkFreeList() and AddToThreadLocalFreeList(). Returns the bracket
@@ -465,25 +470,15 @@ class RosAlloc {
     std::string FreeListToStr(SlotFreeList<kUseTail>* free_list);
     // Check a given pointer is a valid slot address and return it as Slot*.
     Slot* ToSlot(void* ptr) {
-      const uint8_t idx = size_bracket_idx_;
-      const size_t bracket_size = bracketSizes[idx];
-      const size_t offset_from_slot_base = reinterpret_cast<uint8_t*>(ptr)
-          - reinterpret_cast<uint8_t*>(FirstSlot());
-      DCHECK_EQ(offset_from_slot_base % bracket_size, static_cast<size_t>(0));
-      size_t slot_idx = offset_from_slot_base / bracket_size;
-      DCHECK_LT(slot_idx, numOfSlots[idx]);
-      return reinterpret_cast<Slot*>(ptr);
+        const uint8_t idx = size_bracket_idx_;
+        const size_t bracket_size = bracketSizes[idx];
+        const size_t offset_from_slot_base = reinterpret_cast<uint8_t*>(ptr) - reinterpret_cast<uint8_t*>(FirstSlot());
+        DCHECK_EQ(offset_from_slot_base % bracket_size, static_cast<size_t>(0));
+        size_t slot_idx = offset_from_slot_base / bracket_size;
+        DCHECK_LT(slot_idx, numOfSlots[idx]);
+        return reinterpret_cast<Slot*>(ptr);
     }
-    size_t SlotIndex(Slot* slot) const {
-      const uint8_t idx = size_bracket_idx_;
-      const size_t bracket_size = bracketSizes[idx];
-      const size_t offset_from_slot_base = reinterpret_cast<uint8_t*>(slot)
-          - reinterpret_cast<uint8_t*>(FirstSlot());
-      DCHECK_EQ(offset_from_slot_base % bracket_size, 0U);
-      size_t slot_idx = offset_from_slot_base / bracket_size;
-      DCHECK_LT(slot_idx, numOfSlots[idx]);
-      return slot_idx;
-    }
+    size_t SlotIndex(Slot* slot);
 
     // TODO: DISALLOW_COPY_AND_ASSIGN(Run);
   };
@@ -492,8 +487,10 @@ class RosAlloc {
   static constexpr uint8_t kMagicNum = 42;
   // The magic number for free pages.
   static constexpr uint8_t kMagicNumFree = 43;
-  // The number of size brackets.
-  static constexpr size_t kNumOfSizeBrackets = 42;
+  // The number of size brackets. Sync this with the length of Thread::rosalloc_runs_.
+  static constexpr size_t kNumOfSizeBrackets = kNumRosAllocThreadLocalSizeBrackets;
+  // The number of smaller size brackets that are the quantum size apart.
+  static constexpr size_t kNumOfQuantumSizeBrackets = 32;
   // The sizes (the slot sizes, in bytes) of the size brackets.
   static size_t bracketSizes[kNumOfSizeBrackets];
   // The numbers of pages that are used for runs for each size bracket.
@@ -514,23 +511,16 @@ class RosAlloc {
   }
   // Returns the index of the size bracket from the bracket size.
   static size_t BracketSizeToIndex(size_t size) {
-    DCHECK(8 <= size &&
-           ((size <= kMaxThreadLocalBracketSize && size % kThreadLocalBracketQuantumSize == 0) ||
-            (size <= kMaxRegularBracketSize && size % kBracketQuantumSize == 0) ||
-            size == 1 * KB || size == 2 * KB));
+    DCHECK(16 <= size && ((size < 1 * KB && size % 16 == 0) || size == 1 * KB || size == 2 * KB));
     size_t idx;
     if (UNLIKELY(size == 1 * KB)) {
       idx = kNumOfSizeBrackets - 2;
     } else if (UNLIKELY(size == 2 * KB)) {
       idx = kNumOfSizeBrackets - 1;
-    } else if (LIKELY(size <= kMaxThreadLocalBracketSize)) {
-      DCHECK_EQ(size % kThreadLocalBracketQuantumSize, 0U);
-      idx = size / kThreadLocalBracketQuantumSize - 1;
     } else {
-      DCHECK(size <= kMaxRegularBracketSize);
-      DCHECK_EQ((size - kMaxThreadLocalBracketSize) % kBracketQuantumSize, 0U);
-      idx = ((size - kMaxThreadLocalBracketSize) / kBracketQuantumSize - 1)
-          + kNumThreadLocalSizeBrackets;
+      DCHECK(size < 1 * KB);
+      DCHECK_EQ(size % 16, static_cast<size_t>(0));
+      idx = size / 16 - 1;
     }
     DCHECK(bracketSizes[idx] == size);
     return idx;
@@ -545,64 +535,51 @@ class RosAlloc {
   // Rounds up the size up the nearest bracket size.
   static size_t RoundToBracketSize(size_t size) {
     DCHECK(size <= kLargeSizeThreshold);
-    if (LIKELY(size <= kMaxThreadLocalBracketSize)) {
-      return RoundUp(size, kThreadLocalBracketQuantumSize);
-    } else if (size <= kMaxRegularBracketSize) {
-      return RoundUp(size, kBracketQuantumSize);
-    } else if (UNLIKELY(size <= 1 * KB)) {
+    if (LIKELY(size <= 512)) {
+      return RoundUp(size, 16);
+    } else if (512 < size && size <= 1 * KB) {
       return 1 * KB;
     } else {
-      DCHECK_LE(size, 2 * KB);
+      DCHECK(1 * KB < size && size <= 2 * KB);
       return 2 * KB;
     }
   }
   // Returns the size bracket index from the byte size with rounding.
   static size_t SizeToIndex(size_t size) {
     DCHECK(size <= kLargeSizeThreshold);
-    if (LIKELY(size <= kMaxThreadLocalBracketSize)) {
-      return RoundUp(size, kThreadLocalBracketQuantumSize) / kThreadLocalBracketQuantumSize - 1;
-    } else if (size <= kMaxRegularBracketSize) {
-      return (RoundUp(size, kBracketQuantumSize) - kMaxThreadLocalBracketSize) / kBracketQuantumSize
-          - 1 + kNumThreadLocalSizeBrackets;
-    } else if (size <= 1 * KB) {
+    if (LIKELY(size <= 512)) {
+      return RoundUp(size, 16) / 16 - 1;
+    } else if (512 < size && size <= 1 * KB) {
       return kNumOfSizeBrackets - 2;
     } else {
-      DCHECK_LE(size, 2 * KB);
+      DCHECK(1 * KB < size && size <= 2 * KB);
       return kNumOfSizeBrackets - 1;
     }
   }
   // A combination of SizeToIndex() and RoundToBracketSize().
   static size_t SizeToIndexAndBracketSize(size_t size, size_t* bracket_size_out) {
     DCHECK(size <= kLargeSizeThreshold);
-    size_t idx;
-    size_t bracket_size;
-    if (LIKELY(size <= kMaxThreadLocalBracketSize)) {
-      bracket_size = RoundUp(size, kThreadLocalBracketQuantumSize);
-      idx = bracket_size / kThreadLocalBracketQuantumSize - 1;
-    } else if (size <= kMaxRegularBracketSize) {
-      bracket_size = RoundUp(size, kBracketQuantumSize);
-      idx = ((bracket_size - kMaxThreadLocalBracketSize) / kBracketQuantumSize - 1)
-          + kNumThreadLocalSizeBrackets;
-    } else if (size <= 1 * KB) {
-      bracket_size = 1 * KB;
-      idx = kNumOfSizeBrackets - 2;
+    if (LIKELY(size <= 512)) {
+      size_t bracket_size = RoundUp(size, 16);
+      *bracket_size_out = bracket_size;
+      size_t idx = bracket_size / 16 - 1;
+      DCHECK_EQ(bracket_size, IndexToBracketSize(idx));
+      return idx;
+    } else if (512 < size && size <= 1 * KB) {
+      size_t bracket_size = 1024;
+      *bracket_size_out = bracket_size;
+      size_t idx = kNumOfSizeBrackets - 2;
+      DCHECK_EQ(bracket_size, IndexToBracketSize(idx));
+      return idx;
     } else {
-      DCHECK(size <= 2 * KB);
-      bracket_size = 2 * KB;
-      idx = kNumOfSizeBrackets - 1;
+      DCHECK(1 * KB < size && size <= 2 * KB);
+      size_t bracket_size = 2048;
+      *bracket_size_out = bracket_size;
+      size_t idx = kNumOfSizeBrackets - 1;
+      DCHECK_EQ(bracket_size, IndexToBracketSize(idx));
+      return idx;
     }
-    DCHECK_EQ(idx, SizeToIndex(size)) << idx;
-    DCHECK_EQ(bracket_size, IndexToBracketSize(idx)) << idx;
-    DCHECK_EQ(bracket_size, bracketSizes[idx]) << idx;
-    DCHECK_LE(size, bracket_size) << idx;
-    DCHECK(size > kMaxRegularBracketSize ||
-           (size <= kMaxThreadLocalBracketSize &&
-            bracket_size - size < kThreadLocalBracketQuantumSize) ||
-           (size <= kMaxRegularBracketSize && bracket_size - size < kBracketQuantumSize)) << idx;
-    *bracket_size_out = bracket_size;
-    return idx;
   }
-
   // Returns the page map index from an address. Requires that the
   // address is page size aligned.
   size_t ToPageMapIndex(const void* addr) const {
@@ -658,38 +635,19 @@ class RosAlloc {
   // The default value for page_release_size_threshold_.
   static constexpr size_t kDefaultPageReleaseSizeThreshold = 4 * MB;
 
-  // We use thread-local runs for the size brackets whose indexes
+  // We use thread-local runs for the size Brackets whose indexes
   // are less than this index. We use shared (current) runs for the rest.
-  // Sync this with the length of Thread::rosalloc_runs_.
-  static const size_t kNumThreadLocalSizeBrackets = 16;
-  static_assert(kNumThreadLocalSizeBrackets == kNumRosAllocThreadLocalSizeBracketsInThread,
-                "Mismatch between kNumThreadLocalSizeBrackets and "
-                "kNumRosAllocThreadLocalSizeBracketsInThread");
+  static const size_t kNumThreadLocalSizeBrackets = 8;
 
   // The size of the largest bracket we use thread-local runs for.
   // This should be equal to bracketSizes[kNumThreadLocalSizeBrackets - 1].
   static const size_t kMaxThreadLocalBracketSize = 128;
 
-  // We use regular (8 or 16-bytes increment) runs for the size brackets whose indexes are less than
-  // this index.
-  static const size_t kNumRegularSizeBrackets = 40;
-
-  // The size of the largest regular (8 or 16-byte increment) bracket. Non-regular brackets are the
-  // 1 KB and the 2 KB brackets. This should be equal to bracketSizes[kNumRegularSizeBrackets - 1].
-  static const size_t kMaxRegularBracketSize = 512;
-
-  // The bracket size increment for the thread-local brackets (<= kMaxThreadLocalBracketSize bytes).
-  static constexpr size_t kThreadLocalBracketQuantumSize = 8;
-
-  // Equal to Log2(kThreadLocalBracketQuantumSize).
-  static constexpr size_t kThreadLocalBracketQuantumSizeShift = 3;
-
-  // The bracket size increment for the non-thread-local, regular brackets (of size <=
-  // kMaxRegularBracketSize bytes and > kMaxThreadLocalBracketSize bytes).
+  // The bracket size increment for the branckets of size <= 512 bytes
   static constexpr size_t kBracketQuantumSize = 16;
 
-  // Equal to Log2(kBracketQuantumSize).
-  static constexpr size_t kBracketQuantumSizeShift = 4;
+  // Equal to Log2(kBracketQuantumSize)
+  static constexpr size_t kBracketQuanSizeShift = 4;
 
  private:
   // The base address of the memory region that's managed by this allocator.
@@ -741,6 +699,7 @@ class RosAlloc {
   // The table that indicates what pages are currently used for.
   volatile uint8_t* page_map_;  // No GUARDED_BY(lock_) for kReadPageMapEntryWithoutLockInBulkFree.
   size_t page_map_size_;
+  size_t cur_page_map_size_snapshot_;
   size_t max_page_map_size_;
   std::unique_ptr<MemMap> page_map_mem_map_;
 
@@ -752,10 +711,10 @@ class RosAlloc {
   // The global lock. Used to guard the page map, the free page set,
   // and the footprint.
   Mutex lock_ DEFAULT_MUTEX_ACQUIRED_AFTER;
-  // The reader-writer lock to allow one bulk free at a time while
-  // allowing multiple individual frees at the same time. Also, this
-  // is used to avoid race conditions between BulkFree() and
-  // RevokeThreadLocalRuns() on the bulk free list.
+  // Currently RosAlloc is always using bulk free(BulkFree) to free garbages
+  // in the Ros space. The individual free is not used any more. Thus no need
+  // this lock for BulkFree. Keep this lock for multiple individual frees at the
+  // same time, since the individual free code is still there.
   ReaderWriterMutex bulk_free_lock_ DEFAULT_MUTEX_ACQUIRED_AFTER;
 
   // The page release mode.
@@ -765,7 +724,7 @@ class RosAlloc {
   const size_t page_release_size_threshold_;
 
   // Whether this allocator is running under Valgrind.
-  bool is_running_on_memory_tool_;
+  bool running_on_valgrind_;
 
   // The base address of the memory region that's managed by this allocator.
   uint8_t* Begin() { return base_; }
@@ -774,68 +733,71 @@ class RosAlloc {
 
   // Page-granularity alloc/free
   void* AllocPages(Thread* self, size_t num_pages, uint8_t page_map_type)
-      REQUIRES(lock_);
+      EXCLUSIVE_LOCKS_REQUIRED(lock_);
   // Returns how many bytes were freed.
-  size_t FreePages(Thread* self, void* ptr, bool already_zero) REQUIRES(lock_);
+  size_t FreePages(Thread* self, void* ptr, bool already_zero) EXCLUSIVE_LOCKS_REQUIRED(lock_);
 
   // Allocate/free a run slot.
   void* AllocFromRun(Thread* self, size_t size, size_t* bytes_allocated, size_t* usable_size,
                      size_t* bytes_tl_bulk_allocated)
-      REQUIRES(!lock_);
+      LOCKS_EXCLUDED(lock_);
   // Allocate/free a run slot without acquiring locks.
-  // TODO: REQUIRES(Locks::mutator_lock_)
+  // TODO: EXCLUSIVE_LOCKS_REQUIRED(Locks::mutator_lock_)
   void* AllocFromRunThreadUnsafe(Thread* self, size_t size, size_t* bytes_allocated,
                                  size_t* usable_size, size_t* bytes_tl_bulk_allocated)
-      REQUIRES(!lock_);
-  void* AllocFromCurrentRunUnlocked(Thread* self, size_t idx) REQUIRES(!lock_);
+      LOCKS_EXCLUDED(lock_);
+  void* AllocFromCurrentRunUnlocked(Thread* self, size_t idx);
 
   // Returns the bracket size.
   size_t FreeFromRun(Thread* self, void* ptr, Run* run)
-      REQUIRES(!lock_);
+      LOCKS_EXCLUDED(lock_);
 
   // Used to allocate a new thread local run for a size bracket.
-  Run* AllocRun(Thread* self, size_t idx) REQUIRES(!lock_);
+  Run* AllocRun(Thread* self, size_t idx) LOCKS_EXCLUDED(lock_);
 
   // Used to acquire a new/reused run for a size bracket. Used when a
   // thread-local or current run gets full.
-  Run* RefillRun(Thread* self, size_t idx) REQUIRES(!lock_);
+  Run* RefillRun(size_t idx);
 
   // The internal of non-bulk Free().
-  size_t FreeInternal(Thread* self, void* ptr) REQUIRES(!lock_);
+  size_t FreeInternal(Thread* self, void* ptr) LOCKS_EXCLUDED(lock_);
 
   // Allocates large objects.
   void* AllocLargeObject(Thread* self, size_t size, size_t* bytes_allocated,
                          size_t* usable_size, size_t* bytes_tl_bulk_allocated)
-      REQUIRES(!lock_);
+      LOCKS_EXCLUDED(lock_);
 
   // Revoke a run by adding it to non_full_runs_ or freeing the pages.
-  void RevokeRun(Thread* self, size_t idx, Run* run) REQUIRES(!lock_);
+  bool RevokeRun(Thread* self, size_t idx, Run* run);
 
   // Revoke the current runs which share an index with the thread local runs.
-  void RevokeThreadUnsafeCurrentRuns() REQUIRES(!lock_);
+  void RevokeThreadUnsafeCurrentRuns();
 
   // Release a range of pages.
-  size_t ReleasePageRange(uint8_t* start, uint8_t* end) REQUIRES(lock_);
+  size_t ReleasePageRange(uint8_t* start, uint8_t* end) EXCLUSIVE_LOCKS_REQUIRED(lock_);
 
   // Dumps the page map for debugging.
-  std::string DumpPageMap() REQUIRES(lock_);
+  std::string DumpPageMap() EXCLUSIVE_LOCKS_REQUIRED(lock_);
 
  public:
   RosAlloc(void* base, size_t capacity, size_t max_capacity,
            PageReleaseMode page_release_mode,
-           bool running_on_memory_tool,
+           bool running_on_valgrind,
            size_t page_release_size_threshold = kDefaultPageReleaseSizeThreshold);
   ~RosAlloc();
 
   static size_t RunFreeListOffset() {
     return OFFSETOF_MEMBER(Run, free_list_);
   }
+
   static size_t RunFreeListHeadOffset() {
     return OFFSETOF_MEMBER(SlotFreeList<false>, head_);
   }
+
   static size_t RunFreeListSizeOffset() {
     return OFFSETOF_MEMBER(SlotFreeList<false>, size_);
   }
+
   static size_t RunSlotNextOffset() {
     return OFFSETOF_MEMBER(Slot, next_);
   }
@@ -845,11 +807,27 @@ class RosAlloc {
   template<bool kThreadSafe = true>
   void* Alloc(Thread* self, size_t size, size_t* bytes_allocated, size_t* usable_size,
               size_t* bytes_tl_bulk_allocated)
-      REQUIRES(!lock_);
+      LOCKS_EXCLUDED(lock_);
   size_t Free(Thread* self, void* ptr)
-      REQUIRES(!bulk_free_lock_, !lock_);
+      LOCKS_EXCLUDED(bulk_free_lock_);
+  void UpdateRunMetadata(Thread* self, Run* run);
+  ObjectBytePair SweepRun(Thread* self, Run* run, size_t bracket_idx, uintptr_t* live,
+                          uintptr_t* mark, accounting::ContinuousSpaceBitmap* live_bitmap,
+                          uintptr_t heap_begin, bool swap_bitmaps);
+  // SweepWalkPagemap is using free_page_run_size_map_ table to bypass free pages.
+  // The table is guarded by lock_. No need lock_ for SweepWalkPagemap, because it's
+  // OK to bypass fewer pages if this table is modified by new allocation during walking,
+  // since there is no record in the live and mark bitmap for new allocated pages.
+  ObjectBytePair SweepWalkPagemap(bool swap_bitmaps) NO_THREAD_SAFETY_ANALYSIS;
+  void SweepWalkPagemapRange(Thread* self, size_t begin_page_idx, size_t end_page_idx,
+                             uintptr_t* live, uintptr_t* mark,
+                             accounting::ContinuousSpaceBitmap* live_bitmap,
+                             uintptr_t heap_begin, uintptr_t space_begin, bool swap_bitmaps,
+                             ObjectBytePair* freed_pair_ptr)
+      NO_THREAD_SAFETY_ANALYSIS;
+  void SetPageMapSizeSnapshot();
   size_t BulkFree(Thread* self, void** ptrs, size_t num_ptrs)
-      REQUIRES(!bulk_free_lock_, !lock_);
+      LOCKS_EXCLUDED(bulk_free_lock_);
 
   // Returns true if the given allocation request can be allocated in
   // an existing thread local run without allocating a new run.
@@ -857,14 +835,16 @@ class RosAlloc {
   // Allocate the given allocation request in an existing thread local
   // run without allocating a new run.
   ALWAYS_INLINE void* AllocFromThreadLocalRun(Thread* self, size_t size, size_t* bytes_allocated);
-
+  // Free object in thread local run.
+  // Used for parallel copy in GSS.
+  ALWAYS_INLINE bool FreeFromThreadLocalRun(Thread* self, size_t size, void* addr);
   // Returns the maximum bytes that could be allocated for the given
   // size in bulk, that is the maximum value for the
   // bytes_allocated_bulk out param returned by RosAlloc::Alloc().
   ALWAYS_INLINE size_t MaxBytesBulkAllocatedFor(size_t size);
 
   // Returns the size of the allocated slot for a given allocated memory chunk.
-  size_t UsableSize(const void* ptr) REQUIRES(!lock_);
+  size_t UsableSize(const void* ptr);
   // Returns the size of the allocated slot for a given size.
   size_t UsableSize(size_t bytes) {
     if (UNLIKELY(bytes > kLargeSizeThreshold)) {
@@ -875,33 +855,33 @@ class RosAlloc {
   }
   // Try to reduce the current footprint by releasing the free page
   // run at the end of the memory region, if any.
-  bool Trim() REQUIRES(!lock_);
+  bool Trim();
   // Iterates over all the memory slots and apply the given function.
   void InspectAll(void (*handler)(void* start, void* end, size_t used_bytes, void* callback_arg),
                   void* arg)
-      REQUIRES(!lock_);
+      LOCKS_EXCLUDED(lock_);
 
   // Release empty pages.
-  size_t ReleasePages() REQUIRES(!lock_);
+  size_t ReleasePages() LOCKS_EXCLUDED(lock_);
   // Returns the current footprint.
-  size_t Footprint() REQUIRES(!lock_);
+  size_t Footprint() LOCKS_EXCLUDED(lock_);
   // Returns the current capacity, maximum footprint.
-  size_t FootprintLimit() REQUIRES(!lock_);
+  size_t FootprintLimit() LOCKS_EXCLUDED(lock_);
   // Update the current capacity.
-  void SetFootprintLimit(size_t bytes) REQUIRES(!lock_);
+  void SetFootprintLimit(size_t bytes) LOCKS_EXCLUDED(lock_);
 
   // Releases the thread-local runs assigned to the given thread back to the common set of runs.
   // Returns the total bytes of free slots in the revoked thread local runs. This is to be
   // subtracted from Heap::num_bytes_allocated_ to cancel out the ahead-of-time counting.
-  size_t RevokeThreadLocalRuns(Thread* thread) REQUIRES(!lock_, !bulk_free_lock_);
+  size_t RevokeThreadLocalRuns(Thread* thread);
   // Releases the thread-local runs assigned to all the threads back to the common set of runs.
   // Returns the total bytes of free slots in the revoked thread local runs. This is to be
   // subtracted from Heap::num_bytes_allocated_ to cancel out the ahead-of-time counting.
-  size_t RevokeAllThreadLocalRuns() REQUIRES(!Locks::thread_list_lock_, !lock_, !bulk_free_lock_);
+  size_t RevokeAllThreadLocalRuns() LOCKS_EXCLUDED(Locks::thread_list_lock_);
   // Assert the thread local runs of a thread are revoked.
-  void AssertThreadLocalRunsAreRevoked(Thread* thread) REQUIRES(!bulk_free_lock_);
+  void AssertThreadLocalRunsAreRevoked(Thread* thread);
   // Assert all the thread local runs are revoked.
-  void AssertAllThreadLocalRunsAreRevoked() REQUIRES(!Locks::thread_list_lock_, !bulk_free_lock_);
+  void AssertAllThreadLocalRunsAreRevoked() LOCKS_EXCLUDED(Locks::thread_list_lock_);
 
   static Run* GetDedicatedFullRun() {
     return dedicated_full_run_;
@@ -922,14 +902,9 @@ class RosAlloc {
   }
 
   // Verify for debugging.
-  void Verify() REQUIRES(Locks::mutator_lock_, !Locks::thread_list_lock_, !bulk_free_lock_,
-                         !lock_);
+  void Verify() EXCLUSIVE_LOCKS_REQUIRED(Locks::mutator_lock_);
 
-  void LogFragmentationAllocFailure(std::ostream& os, size_t failed_alloc_bytes)
-      REQUIRES(!bulk_free_lock_, !lock_);
-
-  void DumpStats(std::ostream& os)
-      REQUIRES(Locks::mutator_lock_) REQUIRES(!lock_) REQUIRES(!bulk_free_lock_);
+  void LogFragmentationAllocFailure(std::ostream& os, size_t failed_alloc_bytes);
 
  private:
   friend std::ostream& operator<<(std::ostream& os, const RosAlloc::PageMapKind& rhs);

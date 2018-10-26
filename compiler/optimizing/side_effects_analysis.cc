@@ -21,18 +21,17 @@ namespace art {
 void SideEffectsAnalysis::Run() {
   // Inlining might have created more blocks, so we need to increase the size
   // if needed.
-  block_effects_.resize(graph_->GetBlocks().size());
-  loop_effects_.resize(graph_->GetBlocks().size());
+  block_effects_.SetSize(graph_->GetBlocks().Size());
+  loop_effects_.SetSize(graph_->GetBlocks().Size());
 
-  // In DEBUG mode, ensure side effects are properly initialized to empty.
   if (kIsDebugBuild) {
     for (HReversePostOrderIterator it(*graph_); !it.Done(); it.Advance()) {
       HBasicBlock* block = it.Current();
       SideEffects effects = GetBlockEffects(block);
-      DCHECK(effects.DoesNothing());
+      DCHECK(!effects.HasSideEffects() && !effects.HasDependencies());
       if (block->IsLoopHeader()) {
         effects = GetLoopEffects(block);
-        DCHECK(effects.DoesNothing());
+        DCHECK(!effects.HasSideEffects() && !effects.HasDependencies());
       }
     }
   }
@@ -47,14 +46,12 @@ void SideEffectsAnalysis::Run() {
          inst_it.Advance()) {
       HInstruction* instruction = inst_it.Current();
       effects = effects.Union(instruction->GetSideEffects());
-      // If all side effects are represented, scanning further will not add any
-      // more information to side-effects of this block.
-      if (effects.DoesAll()) {
+      if (effects.HasAllSideEffects()) {
         break;
       }
     }
 
-    block_effects_[block->GetBlockId()] = effects;
+    block_effects_.Put(block->GetBlockId(), effects);
 
     if (block->IsLoopHeader()) {
       // The side effects of the loop header are part of the loop.
@@ -76,16 +73,16 @@ void SideEffectsAnalysis::Run() {
 
 SideEffects SideEffectsAnalysis::GetLoopEffects(HBasicBlock* block) const {
   DCHECK(block->IsLoopHeader());
-  return loop_effects_[block->GetBlockId()];
+  return loop_effects_.Get(block->GetBlockId());
 }
 
 SideEffects SideEffectsAnalysis::GetBlockEffects(HBasicBlock* block) const {
-  return block_effects_[block->GetBlockId()];
+  return block_effects_.Get(block->GetBlockId());
 }
 
 void SideEffectsAnalysis::UpdateLoopEffects(HLoopInformation* info, SideEffects effects) {
-  uint32_t id = info->GetHeader()->GetBlockId();
-  loop_effects_[id] = loop_effects_[id].Union(effects);
+  int id = info->GetHeader()->GetBlockId();
+  loop_effects_.Put(id, loop_effects_.Get(id).Union(effects));
 }
 
 }  // namespace art

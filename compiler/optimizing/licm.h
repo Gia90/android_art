@@ -12,6 +12,9 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Modified by Intel Corporation
+ *
  */
 
 #ifndef ART_COMPILER_OPTIMIZING_LICM_H_
@@ -26,9 +29,10 @@ class SideEffectsAnalysis;
 
 class LICM : public HOptimization {
  public:
-  LICM(HGraph* graph, const SideEffectsAnalysis& side_effects, OptimizingCompilerStats* stats)
-      : HOptimization(graph, kLoopInvariantCodeMotionPassName, stats),
-        side_effects_(side_effects) {}
+  LICM(HGraph* graph, const SideEffectsAnalysis& side_effects,
+       OptimizingCompilerStats* stats = nullptr)
+      : HOptimization(graph, true, kLoopInvariantCodeMotionPassName, stats),
+      side_effects_(side_effects) {}
 
   void Run() OVERRIDE;
 

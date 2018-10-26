@@ -32,7 +32,7 @@ union PACKED(4) JValue {
 
   int8_t GetB() const { return b; }
   void SetB(int8_t new_b) {
-    j = ((static_cast<int64_t>(new_b) << 56) >> 56);  // Sign-extend to 64 bits.
+    i = ((static_cast<int32_t>(new_b) << 24) >> 24);  // Sign-extend.
   }
 
   uint16_t GetC() const { return c; }
@@ -45,9 +45,7 @@ union PACKED(4) JValue {
   void SetF(float new_f) { f = new_f; }
 
   int32_t GetI() const { return i; }
-  void SetI(int32_t new_i) {
-    j = ((static_cast<int64_t>(new_i) << 32) >> 32);  // Sign-extend to 64 bits.
-  }
+  void SetI(int32_t new_i) { i = new_i; }
 
   int64_t GetJ() const { return j; }
   void SetJ(int64_t new_j) { j = new_j; }
@@ -57,7 +55,7 @@ union PACKED(4) JValue {
 
   int16_t GetS() const { return s; }
   void SetS(int16_t new_s) {
-    j = ((static_cast<int64_t>(new_s) << 48) >> 48);  // Sign-extend to 64 bits.
+    i = ((static_cast<int32_t>(new_s) << 16) >> 16);  // Sign-extend.
   }
 
   uint8_t GetZ() const { return z; }

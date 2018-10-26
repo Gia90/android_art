@@ -36,8 +36,11 @@ public class Main {
   }
   native int refmap(int x);
 
+  static {
+    System.loadLibrary("arttest");
+  }
+
   public static void main(String[] args) {
-    System.loadLibrary(args[0]);
     Main rm = new Main();
     rm.f();
   }

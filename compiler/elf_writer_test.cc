@@ -21,7 +21,6 @@
 #include "common_compiler_test.h"
 #include "elf_file.h"
 #include "elf_file_impl.h"
-#include "elf_builder.h"
 #include "elf_writer_quick.h"
 #include "oat.h"
 #include "utils.h"
@@ -64,11 +63,7 @@ TEST_F(ElfWriterTest, dlsym) {
   ASSERT_TRUE(file.get() != nullptr);
   {
     std::string error_msg;
-    std::unique_ptr<ElfFile> ef(ElfFile::Open(file.get(),
-                                              false,
-                                              false,
-                                              /*low_4gb*/false,
-                                              &error_msg));
+    std::unique_ptr<ElfFile> ef(ElfFile::Open(file.get(), false, false, &error_msg));
     CHECK(ef.get() != nullptr) << error_msg;
     EXPECT_ELF_FILE_ADDRESS(ef, dl_oatdata, "oatdata", false);
     EXPECT_ELF_FILE_ADDRESS(ef, dl_oatexec, "oatexec", false);
@@ -76,11 +71,7 @@ TEST_F(ElfWriterTest, dlsym) {
   }
   {
     std::string error_msg;
-    std::unique_ptr<ElfFile> ef(ElfFile::Open(file.get(),
-                                              false,
-                                              false,
-                                              /*low_4gb*/false,
-                                              &error_msg));
+    std::unique_ptr<ElfFile> ef(ElfFile::Open(file.get(), false, false, &error_msg));
     CHECK(ef.get() != nullptr) << error_msg;
     EXPECT_ELF_FILE_ADDRESS(ef, dl_oatdata, "oatdata", true);
     EXPECT_ELF_FILE_ADDRESS(ef, dl_oatexec, "oatexec", true);
@@ -88,13 +79,9 @@ TEST_F(ElfWriterTest, dlsym) {
   }
   {
     std::string error_msg;
-    std::unique_ptr<ElfFile> ef(ElfFile::Open(file.get(),
-                                              false,
-                                              true,
-                                              /*low_4gb*/false,
-                                              &error_msg));
+    std::unique_ptr<ElfFile> ef(ElfFile::Open(file.get(), false, true, &error_msg));
     CHECK(ef.get() != nullptr) << error_msg;
-    CHECK(ef->Load(file.get(), false, /*low_4gb*/false, &error_msg)) << error_msg;
+    CHECK(ef->Load(false, &error_msg)) << error_msg;
     EXPECT_EQ(dl_oatdata, ef->FindDynamicSymbolAddress("oatdata"));
     EXPECT_EQ(dl_oatexec, ef->FindDynamicSymbolAddress("oatexec"));
     EXPECT_EQ(dl_oatlastword, ef->FindDynamicSymbolAddress("oatlastword"));
@@ -113,8 +100,7 @@ TEST_F(ElfWriterTest, EncodeDecodeOatPatches) {
 
     // Encode patch locations.
     std::vector<uint8_t> oat_patches;
-    ElfBuilder<ElfTypes32>::EncodeOatPatches(ArrayRef<const uintptr_t>(patch_locations),
-                                             &oat_patches);
+    ElfWriterQuick32::EncodeOatPatches(patch_locations, &oat_patches);
 
     // Create buffer to be patched.
     std::vector<uint8_t> initial_data(256);

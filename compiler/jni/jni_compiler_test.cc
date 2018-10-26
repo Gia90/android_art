@@ -31,7 +31,6 @@
 #include "mirror/object_array-inl.h"
 #include "mirror/object-inl.h"
 #include "mirror/stack_trace_element.h"
-#include "nativeloader/native_loader.h"
 #include "runtime.h"
 #include "ScopedLocalRef.h"
 #include "scoped_thread_state_change.h"
@@ -52,11 +51,6 @@ class JniCompilerTest : public CommonCompilerTest {
   void SetUp() OVERRIDE {
     CommonCompilerTest::SetUp();
     check_generic_jni_ = false;
-  }
-
-  void TearDown() OVERRIDE {
-    android::ResetNativeLoader();
-    CommonCompilerTest::TearDown();
   }
 
   void SetCheckGenericJni(bool generic) {
@@ -98,13 +92,11 @@ class JniCompilerTest : public CommonCompilerTest {
       CompileForTest(class_loader_, direct, method_name, method_sig);
       // Start runtime.
       Thread::Current()->TransitionFromSuspendedToRunnable();
-      android::InitializeNativeLoader();
       bool started = runtime_->Start();
       CHECK(started);
     }
     // JNI operations after runtime start.
     env_ = Thread::Current()->GetJniEnv();
-    library_search_path_ = env_->NewStringUTF("");
     jklass_ = env_->FindClass("MyClassNatives");
     ASSERT_TRUE(jklass_ != nullptr) << method_name << " " << method_sig;
 
@@ -176,7 +168,6 @@ class JniCompilerTest : public CommonCompilerTest {
   void StackArgsSignExtendedMips64Impl();
 
   JNIEnv* env_;
-  jstring library_search_path_;
   jmethodID jmethod_;
   bool check_generic_jni_;
 };
@@ -228,8 +219,7 @@ void JniCompilerTest::CompileAndRunIntMethodThroughStubImpl() {
   // calling through stub will link with &Java_MyClassNatives_bar
 
   std::string reason;
-  ASSERT_TRUE(Runtime::Current()->GetJavaVM()->
-                  LoadNativeLibrary(env_, "", class_loader_, library_search_path_, &reason))
+  ASSERT_TRUE(Runtime::Current()->GetJavaVM()->LoadNativeLibrary(env_, "", class_loader_, &reason))
       << reason;
 
   jint result = env_->CallNonvirtualIntMethod(jobj_, jklass_, jmethod_, 24);
@@ -243,8 +233,7 @@ void JniCompilerTest::CompileAndRunStaticIntMethodThroughStubImpl() {
   // calling through stub will link with &Java_MyClassNatives_sbar
 
   std::string reason;
-  ASSERT_TRUE(Runtime::Current()->GetJavaVM()->
-                  LoadNativeLibrary(env_, "", class_loader_, library_search_path_, &reason))
+  ASSERT_TRUE(Runtime::Current()->GetJavaVM()->LoadNativeLibrary(env_, "", class_loader_, &reason))
       << reason;
 
   jint result = env_->CallStaticIntMethod(jklass_, jmethod_, 42);

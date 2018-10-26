@@ -12,6 +12,9 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Modified by Intel Corporation
+ *
  */
 
 #ifndef ART_DISASSEMBLER_DISASSEMBLER_X86_H_
@@ -33,6 +36,7 @@ class DisassemblerX86 FINAL : public Disassembler {
   void Dump(std::ostream& os, const uint8_t* begin, const uint8_t* end) OVERRIDE;
 
  private:
+  size_t DumpNops(std::ostream& os, const uint8_t* instr);
   size_t DumpInstruction(std::ostream& os, const uint8_t* instr);
 
   std::string DumpAddress(uint8_t mod, uint8_t rm, uint8_t rex64, uint8_t rex_w, bool no_ops,

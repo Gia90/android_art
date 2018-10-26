@@ -16,7 +16,6 @@
 
 public class Main {
   public static void main(String[] args) {
-    System.loadLibrary(args[0]);
     boolean hasImage = hasImage();
     System.out.println(
         "Has image is " + hasImage + ", is image dex2oat enabled is "
@@ -27,6 +26,10 @@ public class Main {
     } else if (!hasImage && isImageDex2OatEnabled()) {
       throw new Error("Image with dex2oat enabled runs without an oat file");
     }
+  }
+
+  static {
+    System.loadLibrary("arttest");
   }
 
   private native static boolean hasImage();

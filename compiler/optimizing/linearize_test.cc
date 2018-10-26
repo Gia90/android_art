@@ -29,30 +29,37 @@
 #include "nodes.h"
 #include "optimizing_unit_test.h"
 #include "pretty_printer.h"
+#include "ssa_builder.h"
 #include "ssa_liveness_analysis.h"
+
+#include "gtest/gtest.h"
 
 namespace art {
 
-class LinearizeTest : public CommonCompilerTest {};
-
-template <size_t number_of_blocks>
-static void TestCode(const uint16_t* data, const uint32_t (&expected_order)[number_of_blocks]) {
+static void TestCode(const uint16_t* data, const int* expected_order, size_t number_of_blocks) {
   ArenaPool pool;
   ArenaAllocator allocator(&pool);
-  HGraph* graph = CreateCFG(&allocator, data);
+  HGraph* graph = CreateGraph(&allocator);
+  HGraphBuilder builder(graph);
+  const DexFile::CodeItem* item = reinterpret_cast<const DexFile::CodeItem*>(data);
+  bool graph_built = builder.BuildGraph(*item);
+  ASSERT_TRUE(graph_built);
+
+  graph->TryBuildingSsa();
+
   std::unique_ptr<const X86InstructionSetFeatures> features_x86(
       X86InstructionSetFeatures::FromCppDefines());
   x86::CodeGeneratorX86 codegen(graph, *features_x86.get(), CompilerOptions());
   SsaLivenessAnalysis liveness(graph, &codegen);
   liveness.Analyze();
 
-  ASSERT_EQ(graph->GetLinearOrder().size(), number_of_blocks);
+  ASSERT_EQ(graph->GetLinearOrder().Size(), number_of_blocks);
   for (size_t i = 0; i < number_of_blocks; ++i) {
-    ASSERT_EQ(graph->GetLinearOrder()[i]->GetBlockId(), expected_order[i]);
+    ASSERT_EQ(graph->GetLinearOrder().Get(i)->GetBlockId(), expected_order[i]);
   }
 }
 
-TEST_F(LinearizeTest, CFG1) {
+TEST(LinearizeTest, CFG1) {
   // Structure of this graph (+ are back edges)
   //            Block0
   //              |
@@ -73,11 +80,11 @@ TEST_F(LinearizeTest, CFG1) {
     Instruction::GOTO | 0xFE00,
     Instruction::RETURN_VOID);
 
-  const uint32_t blocks[] = {0, 1, 2, 7, 3, 4, 8, 5, 6};
-  TestCode(data, blocks);
+  const int blocks[] = {0, 1, 2, 7, 3, 4, 8, 5, 6};
+  TestCode(data, blocks, 9);
 }
 
-TEST_F(LinearizeTest, CFG2) {
+TEST(LinearizeTest, CFG2) {
   // Structure of this graph (+ are back edges)
   //            Block0
   //              |
@@ -98,11 +105,11 @@ TEST_F(LinearizeTest, CFG2) {
     Instruction::IF_EQ, 0xFFFD,
     Instruction::GOTO | 0xFE00);
 
-  const uint32_t blocks[] = {0, 1, 2, 7, 4, 5, 8, 3, 6};
-  TestCode(data, blocks);
+  const int blocks[] = {0, 1, 2, 7, 4, 5, 8, 3, 6};
+  TestCode(data, blocks, 9);
 }
 
-TEST_F(LinearizeTest, CFG3) {
+TEST(LinearizeTest, CFG3) {
   // Structure of this graph (+ are back edges)
   //            Block0
   //              |
@@ -125,11 +132,11 @@ TEST_F(LinearizeTest, CFG3) {
     Instruction::IF_EQ, 0xFFFC,
     Instruction::GOTO | 0xFD00);
 
-  const uint32_t blocks[] = {0, 1, 2, 8, 5, 6, 4, 9, 3, 7};
-  TestCode(data, blocks);
+  const int blocks[] = {0, 1, 2, 8, 5, 6, 4, 9, 3, 7};
+  TestCode(data, blocks, 10);
 }
 
-TEST_F(LinearizeTest, CFG4) {
+TEST(LinearizeTest, CFG4) {
   /* Structure of this graph (+ are back edges)
   //            Block0
   //              |
@@ -155,11 +162,11 @@ TEST_F(LinearizeTest, CFG4) {
     Instruction::GOTO | 0xFE00,
     Instruction::RETURN_VOID);
 
-  const uint32_t blocks[] = {0, 1, 2, 8, 3, 10, 4, 5, 11, 9, 6, 7};
-  TestCode(data, blocks);
+  const int blocks[] = {0, 1, 2, 8, 3, 10, 4, 5, 11, 9, 6, 7};
+  TestCode(data, blocks, 12);
 }
 
-TEST_F(LinearizeTest, CFG5) {
+TEST(LinearizeTest, CFG5) {
   /* Structure of this graph (+ are back edges)
   //            Block0
   //              |
@@ -185,11 +192,11 @@ TEST_F(LinearizeTest, CFG5) {
     Instruction::IF_EQ, 0xFFFE,
     Instruction::GOTO | 0xFE00);
 
-  const uint32_t blocks[] = {0, 1, 2, 8, 4, 10, 5, 6, 11, 9, 3, 7};
-  TestCode(data, blocks);
+  const int blocks[] = {0, 1, 2, 8, 4, 10, 5, 6, 11, 9, 3, 7};
+  TestCode(data, blocks, 12);
 }
 
-TEST_F(LinearizeTest, CFG6) {
+TEST(LinearizeTest, CFG6) {
   //            Block0
   //              |
   //            Block1
@@ -211,11 +218,11 @@ TEST_F(LinearizeTest, CFG6) {
     Instruction::RETURN_VOID,
     Instruction::GOTO | 0xFA00);
 
-  const uint32_t blocks[] = {0, 1, 2, 3, 4, 6, 9, 8, 5, 7};
-  TestCode(data, blocks);
+  const int blocks[] = {0, 1, 2, 3, 4, 6, 9, 8, 5, 7};
+  TestCode(data, blocks, arraysize(blocks));
 }
 
-TEST_F(LinearizeTest, CFG7) {
+TEST(LinearizeTest, CFG7) {
   // Structure of this graph (+ are back edges)
   //            Block0
   //              |
@@ -239,8 +246,8 @@ TEST_F(LinearizeTest, CFG7) {
     Instruction::RETURN_VOID,
     Instruction::GOTO | 0xFA00);
 
-  const uint32_t blocks[] = {0, 1, 2, 3, 4, 9, 8, 6, 5, 7};
-  TestCode(data, blocks);
+  const int blocks[] = {0, 1, 2, 3, 4, 9, 8, 6, 5, 7};
+  TestCode(data, blocks, arraysize(blocks));
 }
 
 }  // namespace art

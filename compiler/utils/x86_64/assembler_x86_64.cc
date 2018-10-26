@@ -12,6 +12,9 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Modified by Intel Corporation
+ *
  */
 
 #include "assembler_x86_64.h"
@@ -220,19 +223,6 @@ void X86_64Assembler::cmov(Condition c, CpuRegister dst, CpuRegister src, bool i
   EmitUint8(0x0F);
   EmitUint8(0x40 + c);
   EmitRegisterOperand(dst.LowBits(), src.LowBits());
-}
-
-
-void X86_64Assembler::cmov(Condition c, CpuRegister dst, const Address& src, bool is64bit) {
-  AssemblerBuffer::EnsureCapacity ensured(&buffer_);
-  if (is64bit) {
-    EmitRex64(dst, src);
-  } else {
-    EmitOptionalRex32(dst, src);
-  }
-  EmitUint8(0x0F);
-  EmitUint8(0x40 + c);
-  EmitOperand(dst.LowBits(), src);
 }
 
 
@@ -1226,16 +1216,14 @@ void X86_64Assembler::xchgl(CpuRegister reg, const Address& address) {
 
 void X86_64Assembler::cmpw(const Address& address, const Immediate& imm) {
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
-  CHECK(imm.is_int32());
-  EmitOperandSizeOverride();
   EmitOptionalRex32(address);
+  EmitUint8(0x66);
   EmitComplex(7, address, imm);
 }
 
 
 void X86_64Assembler::cmpl(CpuRegister reg, const Immediate& imm) {
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
-  CHECK(imm.is_int32());
   EmitOptionalRex32(reg);
   EmitComplex(7, Operand(reg), imm);
 }
@@ -1267,7 +1255,6 @@ void X86_64Assembler::cmpl(const Address& address, CpuRegister reg) {
 
 void X86_64Assembler::cmpl(const Address& address, const Immediate& imm) {
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
-  CHECK(imm.is_int32());
   EmitOptionalRex32(address);
   EmitComplex(7, address, imm);
 }
@@ -1619,6 +1606,22 @@ void X86_64Assembler::addl(const Address& address, const Immediate& imm) {
 }
 
 
+void X86_64Assembler::addq(const Address& address, CpuRegister reg) {
+  AssemblerBuffer::EnsureCapacity ensured(&buffer_);
+  EmitRex64(reg, address);
+  EmitUint8(0x01);
+  EmitOperand(reg.LowBits(), address);
+}
+
+
+void X86_64Assembler::addq(const Address& address, const Immediate& imm) {
+  CHECK(imm.is_int32());
+  AssemblerBuffer::EnsureCapacity ensured(&buffer_);
+  EmitRex64(address);
+  EmitComplex(0, address, imm);
+}
+
+
 void X86_64Assembler::subl(CpuRegister dst, CpuRegister src) {
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitOptionalRex32(dst, src);
@@ -1631,6 +1634,29 @@ void X86_64Assembler::subl(CpuRegister reg, const Immediate& imm) {
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitOptionalRex32(reg);
   EmitComplex(5, Operand(reg), imm);
+}
+
+
+void X86_64Assembler::subl(const Address& dst, CpuRegister src) {
+  AssemblerBuffer::EnsureCapacity ensured(&buffer_);
+  EmitOptionalRex32(src, dst);
+  EmitUint8(0x81);
+  EmitOperand(src.LowBits(), dst);
+}
+
+
+void X86_64Assembler::subl(const Address& dst, const Immediate& imm) {
+  AssemblerBuffer::EnsureCapacity ensured(&buffer_);
+  EmitOptionalRex32(dst);
+  EmitComplex(5, dst, imm);
+}
+
+
+void X86_64Assembler::subl(CpuRegister reg, const Address& address) {
+  AssemblerBuffer::EnsureCapacity ensured(&buffer_);
+  EmitOptionalRex32(reg, address);
+  EmitUint8(0x2B);
+  EmitOperand(reg.LowBits(), address);
 }
 
 
@@ -1658,11 +1684,19 @@ void X86_64Assembler::subq(CpuRegister reg, const Address& address) {
 }
 
 
-void X86_64Assembler::subl(CpuRegister reg, const Address& address) {
+void X86_64Assembler::subq(const Address& dst, CpuRegister src) {
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
-  EmitOptionalRex32(reg, address);
-  EmitUint8(0x2B);
-  EmitOperand(reg.LowBits(), address);
+  EmitRex64(src, dst);
+  EmitUint8(0x29);
+  EmitOperand(src.LowBits(), dst);
+}
+
+
+void X86_64Assembler::subq(const Address& dst, const Immediate& imm) {
+  AssemblerBuffer::EnsureCapacity ensured(&buffer_);
+  CHECK(imm.is_int32());  // subq only supports 32b immediate.
+  EmitRex64(dst);
+  EmitComplex(5, dst, imm);
 }
 
 
@@ -1882,46 +1916,6 @@ void X86_64Assembler::sarq(CpuRegister operand, CpuRegister shifter) {
 }
 
 
-void X86_64Assembler::roll(CpuRegister reg, const Immediate& imm) {
-  EmitGenericShift(false, 0, reg, imm);
-}
-
-
-void X86_64Assembler::roll(CpuRegister operand, CpuRegister shifter) {
-  EmitGenericShift(false, 0, operand, shifter);
-}
-
-
-void X86_64Assembler::rorl(CpuRegister reg, const Immediate& imm) {
-  EmitGenericShift(false, 1, reg, imm);
-}
-
-
-void X86_64Assembler::rorl(CpuRegister operand, CpuRegister shifter) {
-  EmitGenericShift(false, 1, operand, shifter);
-}
-
-
-void X86_64Assembler::rolq(CpuRegister reg, const Immediate& imm) {
-  EmitGenericShift(true, 0, reg, imm);
-}
-
-
-void X86_64Assembler::rolq(CpuRegister operand, CpuRegister shifter) {
-  EmitGenericShift(true, 0, operand, shifter);
-}
-
-
-void X86_64Assembler::rorq(CpuRegister reg, const Immediate& imm) {
-  EmitGenericShift(true, 1, reg, imm);
-}
-
-
-void X86_64Assembler::rorq(CpuRegister operand, CpuRegister shifter) {
-  EmitGenericShift(true, 1, operand, shifter);
-}
-
-
 void X86_64Assembler::negl(CpuRegister reg) {
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitOptionalRex32(reg);
@@ -2112,9 +2106,9 @@ void X86_64Assembler::jmp(NearLabel* label) {
 
 void X86_64Assembler::rep_movsw() {
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
-  EmitUint8(0x66);
   EmitUint8(0xF3);
-  EmitUint8(0xA5);
+  EmitUint8(0x66);
+  EmitUint8(0xa5);
 }
 
 
@@ -2196,134 +2190,12 @@ void X86_64Assembler::bswapq(CpuRegister dst) {
   EmitUint8(0xC8 + dst.LowBits());
 }
 
-void X86_64Assembler::bsfl(CpuRegister dst, CpuRegister src) {
-  AssemblerBuffer::EnsureCapacity ensured(&buffer_);
-  EmitOptionalRex32(dst, src);
-  EmitUint8(0x0F);
-  EmitUint8(0xBC);
-  EmitRegisterOperand(dst.LowBits(), src.LowBits());
-}
-
-void X86_64Assembler::bsfl(CpuRegister dst, const Address& src) {
-  AssemblerBuffer::EnsureCapacity ensured(&buffer_);
-  EmitOptionalRex32(dst, src);
-  EmitUint8(0x0F);
-  EmitUint8(0xBC);
-  EmitOperand(dst.LowBits(), src);
-}
-
-void X86_64Assembler::bsfq(CpuRegister dst, CpuRegister src) {
-  AssemblerBuffer::EnsureCapacity ensured(&buffer_);
-  EmitRex64(dst, src);
-  EmitUint8(0x0F);
-  EmitUint8(0xBC);
-  EmitRegisterOperand(dst.LowBits(), src.LowBits());
-}
-
-void X86_64Assembler::bsfq(CpuRegister dst, const Address& src) {
-  AssemblerBuffer::EnsureCapacity ensured(&buffer_);
-  EmitRex64(dst, src);
-  EmitUint8(0x0F);
-  EmitUint8(0xBC);
-  EmitOperand(dst.LowBits(), src);
-}
-
-void X86_64Assembler::bsrl(CpuRegister dst, CpuRegister src) {
-  AssemblerBuffer::EnsureCapacity ensured(&buffer_);
-  EmitOptionalRex32(dst, src);
-  EmitUint8(0x0F);
-  EmitUint8(0xBD);
-  EmitRegisterOperand(dst.LowBits(), src.LowBits());
-}
-
-void X86_64Assembler::bsrl(CpuRegister dst, const Address& src) {
-  AssemblerBuffer::EnsureCapacity ensured(&buffer_);
-  EmitOptionalRex32(dst, src);
-  EmitUint8(0x0F);
-  EmitUint8(0xBD);
-  EmitOperand(dst.LowBits(), src);
-}
-
-void X86_64Assembler::bsrq(CpuRegister dst, CpuRegister src) {
-  AssemblerBuffer::EnsureCapacity ensured(&buffer_);
-  EmitRex64(dst, src);
-  EmitUint8(0x0F);
-  EmitUint8(0xBD);
-  EmitRegisterOperand(dst.LowBits(), src.LowBits());
-}
-
-void X86_64Assembler::bsrq(CpuRegister dst, const Address& src) {
-  AssemblerBuffer::EnsureCapacity ensured(&buffer_);
-  EmitRex64(dst, src);
-  EmitUint8(0x0F);
-  EmitUint8(0xBD);
-  EmitOperand(dst.LowBits(), src);
-}
-
-void X86_64Assembler::popcntl(CpuRegister dst, CpuRegister src) {
-  AssemblerBuffer::EnsureCapacity ensured(&buffer_);
-  EmitUint8(0xF3);
-  EmitOptionalRex32(dst, src);
-  EmitUint8(0x0F);
-  EmitUint8(0xB8);
-  EmitRegisterOperand(dst.LowBits(), src.LowBits());
-}
-
-void X86_64Assembler::popcntl(CpuRegister dst, const Address& src) {
-  AssemblerBuffer::EnsureCapacity ensured(&buffer_);
-  EmitUint8(0xF3);
-  EmitOptionalRex32(dst, src);
-  EmitUint8(0x0F);
-  EmitUint8(0xB8);
-  EmitOperand(dst.LowBits(), src);
-}
-
-void X86_64Assembler::popcntq(CpuRegister dst, CpuRegister src) {
-  AssemblerBuffer::EnsureCapacity ensured(&buffer_);
-  EmitUint8(0xF3);
-  EmitRex64(dst, src);
-  EmitUint8(0x0F);
-  EmitUint8(0xB8);
-  EmitRegisterOperand(dst.LowBits(), src.LowBits());
-}
-
-void X86_64Assembler::popcntq(CpuRegister dst, const Address& src) {
-  AssemblerBuffer::EnsureCapacity ensured(&buffer_);
-  EmitUint8(0xF3);
-  EmitRex64(dst, src);
-  EmitUint8(0x0F);
-  EmitUint8(0xB8);
-  EmitOperand(dst.LowBits(), src);
-}
 
 void X86_64Assembler::repne_scasw() {
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
-  EmitUint8(0x66);
   EmitUint8(0xF2);
-  EmitUint8(0xAF);
-}
-
-
-void X86_64Assembler::repe_cmpsw() {
-  AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0x66);
-  EmitUint8(0xF3);
-  EmitUint8(0xA7);
-}
-
-
-void X86_64Assembler::repe_cmpsl() {
-  AssemblerBuffer::EnsureCapacity ensured(&buffer_);
-  EmitUint8(0xF3);
-  EmitUint8(0xA7);
-}
-
-
-void X86_64Assembler::repe_cmpsq() {
-  AssemblerBuffer::EnsureCapacity ensured(&buffer_);
-  EmitUint8(0xF3);
-  EmitRex64();
-  EmitUint8(0xA7);
+  EmitUint8(0xAF);
 }
 
 
@@ -2881,12 +2753,12 @@ void X86_64Assembler::LoadRef(ManagedRegister mdest, FrameOffset src) {
 }
 
 void X86_64Assembler::LoadRef(ManagedRegister mdest, ManagedRegister base, MemberOffset offs,
-                              bool unpoison_reference) {
+                              bool poison_reference) {
   X86_64ManagedRegister dest = mdest.AsX86_64();
   CHECK(dest.IsCpuRegister() && dest.IsCpuRegister());
   movl(dest.AsCpuRegister(), Address(base.AsX86_64().AsCpuRegister(), offs));
-  if (unpoison_reference) {
-    MaybeUnpoisonHeapReference(dest.AsCpuRegister());
+  if (kPoisonHeapReferences && poison_reference) {
+    negl(dest.AsCpuRegister());
   }
 }
 
@@ -3144,7 +3016,7 @@ class X86_64ExceptionSlowPath FINAL : public SlowPath {
 };
 
 void X86_64Assembler::ExceptionPoll(ManagedRegister /*scratch*/, size_t stack_adjust) {
-  X86_64ExceptionSlowPath* slow = new (GetArena()) X86_64ExceptionSlowPath(stack_adjust);
+  X86_64ExceptionSlowPath* slow = new X86_64ExceptionSlowPath(stack_adjust);
   buffer_.EnqueueSlowPath(slow);
   gs()->cmpl(Address::Absolute(Thread::ExceptionOffset<8>(), true), Immediate(0));
   j(kNotEqual, slow->Entry());
@@ -3167,21 +3039,30 @@ void X86_64ExceptionSlowPath::Emit(Assembler *sasm) {
 }
 
 void X86_64Assembler::AddConstantArea() {
-  ArrayRef<const int32_t> area = constant_area_.GetBuffer();
+  size_t num_zero_words = 0;
+  const std::vector<int32_t>& area = constant_area_.GetBuffer(&num_zero_words);
+  // Generate the literal area first.
   for (size_t i = 0, e = area.size(); i < e; i++) {
     AssemblerBuffer::EnsureCapacity ensured(&buffer_);
     EmitInt32(area[i]);
   }
+
+  // Generate the zero word area, with the fixups as needed.
+  const std::vector<ConstantArea::FixupInfo>& fixups = constant_area_.GetFixups();
+  auto fixup_it = fixups.begin();
+  size_t next_fixup_index = (fixup_it == fixups.end()) ? -1 : fixup_it->first;
+  for (size_t i = 0; i < num_zero_words; i++) {
+    AssemblerBuffer::EnsureCapacity ensured(&buffer_);
+    if (i == next_fixup_index) {
+      EmitFixup(fixup_it->second);
+      fixup_it++;
+      next_fixup_index = (fixup_it == fixups.end()) ? -1 : fixup_it->first;
+    }
+    EmitInt32(0);
+  }
 }
 
-size_t ConstantArea::AppendInt32(int32_t v) {
-  size_t result = buffer_.size() * elem_size_;
-  buffer_.push_back(v);
-  return result;
-}
-
-size_t ConstantArea::AddInt32(int32_t v) {
-  // Look for an existing match.
+int ConstantArea::AddInt32(int32_t v) {
   for (size_t i = 0, e = buffer_.size(); i < e; i++) {
     if (v == buffer_[i]) {
       return i * elem_size_;
@@ -3189,10 +3070,12 @@ size_t ConstantArea::AddInt32(int32_t v) {
   }
 
   // Didn't match anything.
-  return AppendInt32(v);
+  int result = buffer_.size() * elem_size_;
+  buffer_.push_back(v);
+  return result;
 }
 
-size_t ConstantArea::AddInt64(int64_t v) {
+int ConstantArea::AddInt64(int64_t v) {
   int32_t v_low = v;
   int32_t v_high = v >> 32;
   if (buffer_.size() > 1) {
@@ -3205,18 +3088,18 @@ size_t ConstantArea::AddInt64(int64_t v) {
   }
 
   // Didn't match anything.
-  size_t result = buffer_.size() * elem_size_;
+  int result = buffer_.size() * elem_size_;
   buffer_.push_back(v_low);
   buffer_.push_back(v_high);
   return result;
 }
 
-size_t ConstantArea::AddDouble(double v) {
+int ConstantArea::AddDouble(double v) {
   // Treat the value as a 64-bit integer value.
   return AddInt64(bit_cast<int64_t, double>(v));
 }
 
-size_t ConstantArea::AddFloat(float v) {
+int ConstantArea::AddFloat(float v) {
   // Treat the value as a 32-bit integer value.
   return AddInt32(bit_cast<int32_t, float>(v));
 }

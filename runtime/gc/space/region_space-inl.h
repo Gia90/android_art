@@ -43,7 +43,7 @@ template<bool kForEvac>
 inline mirror::Object* RegionSpace::AllocNonvirtual(size_t num_bytes, size_t* bytes_allocated,
                                                     size_t* usable_size,
                                                     size_t* bytes_tl_bulk_allocated) {
-  DCHECK_ALIGNED(num_bytes, kAlignment);
+  DCHECK(IsAligned<kAlignment>(num_bytes));
   mirror::Object* obj;
   if (LIKELY(num_bytes <= kRegionSize)) {
     // Non-large object.
@@ -115,7 +115,7 @@ inline mirror::Object* RegionSpace::Region::Alloc(size_t num_bytes, size_t* byte
                                                   size_t* usable_size,
                                                   size_t* bytes_tl_bulk_allocated) {
   DCHECK(IsAllocated() && IsInToSpace());
-  DCHECK_ALIGNED(num_bytes, kAlignment);
+  DCHECK(IsAligned<kAlignment>(num_bytes));
   Atomic<uint8_t*>* atomic_top = reinterpret_cast<Atomic<uint8_t*>*>(&top_);
   uint8_t* old_top;
   uint8_t* new_top;
@@ -138,7 +138,8 @@ inline mirror::Object* RegionSpace::Region::Alloc(size_t num_bytes, size_t* byte
   return reinterpret_cast<mirror::Object*>(old_top);
 }
 
-inline size_t RegionSpace::AllocationSizeNonvirtual(mirror::Object* obj, size_t* usable_size) {
+inline size_t RegionSpace::AllocationSizeNonvirtual(mirror::Object* obj, size_t* usable_size)
+    SHARED_LOCKS_REQUIRED(Locks::mutator_lock_) {
   size_t num_bytes = obj->SizeOf();
   if (usable_size != nullptr) {
     if (LIKELY(num_bytes <= kRegionSize)) {
@@ -265,7 +266,7 @@ template<bool kForEvac>
 mirror::Object* RegionSpace::AllocLarge(size_t num_bytes, size_t* bytes_allocated,
                                         size_t* usable_size,
                                         size_t* bytes_tl_bulk_allocated) {
-  DCHECK_ALIGNED(num_bytes, kAlignment);
+  DCHECK(IsAligned<kAlignment>(num_bytes));
   DCHECK_GT(num_bytes, kRegionSize);
   size_t num_regs = RoundUp(num_bytes, kRegionSize) / kRegionSize;
   DCHECK_GT(num_regs, 0U);

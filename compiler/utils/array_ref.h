@@ -62,14 +62,14 @@ class ArrayRef {
   }
 
   template <size_t size>
-  explicit constexpr ArrayRef(T (&array)[size])
+  constexpr ArrayRef(T (&array)[size])
     : array_(array), size_(size) {
   }
 
   template <typename U, size_t size>
-  explicit constexpr ArrayRef(U (&array)[size],
-                              typename std::enable_if<std::is_same<T, const U>::value, tag>::type
-                                  t ATTRIBUTE_UNUSED = tag())
+  constexpr ArrayRef(U (&array)[size],
+                     typename std::enable_if<std::is_same<T, const U>::value, tag>::type
+                         t ATTRIBUTE_UNUSED = tag())
     : array_(array), size_(size) {
   }
 
@@ -77,19 +77,15 @@ class ArrayRef {
       : array_(array_in), size_(size_in) {
   }
 
-  template <typename Vector,
-            typename = typename std::enable_if<
-                std::is_same<typename Vector::value_type, value_type>::value>::type>
-  explicit ArrayRef(Vector& v)
+  template <typename Alloc>
+  explicit ArrayRef(std::vector<T, Alloc>& v)
       : array_(v.data()), size_(v.size()) {
   }
 
-  template <typename Vector,
-            typename = typename std::enable_if<
-                std::is_same<
-                    typename std::add_const<typename Vector::value_type>::type,
-                    value_type>::value>::type>
-  explicit ArrayRef(const Vector& v)
+  template <typename U, typename Alloc>
+  ArrayRef(const std::vector<U, Alloc>& v,
+           typename std::enable_if<std::is_same<T, const U>::value, tag>::type
+               t ATTRIBUTE_UNUSED = tag())
       : array_(v.data()), size_(v.size()) {
   }
 
@@ -164,15 +160,6 @@ class ArrayRef {
 
   value_type* data() { return array_; }
   const value_type* data() const { return array_; }
-
-  ArrayRef SubArray(size_type pos) const {
-    return SubArray(pos, size_ - pos);
-  }
-  ArrayRef SubArray(size_type pos, size_type length) const {
-    DCHECK_LE(pos, size());
-    DCHECK_LE(length, size() - pos);
-    return ArrayRef(array_ + pos, length);
-  }
 
  private:
   T* array_;

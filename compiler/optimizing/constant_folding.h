@@ -12,6 +12,9 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Modified by Intel Corporation
+ *
  */
 
 #ifndef ART_COMPILER_OPTIMIZING_CONSTANT_FOLDING_H_
@@ -26,21 +29,16 @@ namespace art {
  * Optimization pass performing a simple constant-expression
  * evaluation on the SSA form.
  *
- * Note that graph simplifications producing a constant should be
- * implemented in art::HConstantFolding, while graph simplifications
- * not producing constants should be implemented in
- * art::InstructionSimplifier.  (This convention is a choice that was
- * made during the development of these parts of the compiler and is
- * not bound by any technical requirement.)
- *
  * This class is named art::HConstantFolding to avoid name
  * clashes with the art::ConstantPropagation class defined in
  * compiler/dex/post_opt_passes.h.
  */
 class HConstantFolding : public HOptimization {
  public:
-  HConstantFolding(HGraph* graph, const char* name = kConstantFoldingPassName)
-      : HOptimization(graph, name) {}
+  explicit HConstantFolding(HGraph* graph,
+                            OptimizingCompilerStats* stats = nullptr,
+                            const char* name = kConstantFoldingPassName)
+      : HOptimization(graph, true, name, stats) {}
 
   void Run() OVERRIDE;
 

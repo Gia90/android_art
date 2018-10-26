@@ -18,17 +18,16 @@
 
 #define CMDLINE_NDEBUG 1  // Do not output any debugging information for parsing.
 
-#include "memory_representation.h"
-#include "detail/cmdline_debug_detail.h"
+#include "cmdline/memory_representation.h"
+#include "cmdline/detail/cmdline_debug_detail.h"
 #include "cmdline_type_parser.h"
 
 // Includes for the types that are being specialized
 #include <string>
 #include "unit.h"
 #include "jdwp/jdwp.h"
-#include "base/logging.h"
-#include "base/time_utils.h"
-#include "experimental_flags.h"
+#include "runtime/base/logging.h"
+#include "runtime/base/time_utils.h"
 #include "gc/collector_type.h"
 #include "gc/space/large_object_space.h"
 #include "profiler_options.h"
@@ -584,12 +583,8 @@ struct CmdlineType<LogVerbosity> : CmdlineTypeParser<LogVerbosity> {
     for (size_t j = 0; j < verbose_options.size(); ++j) {
       if (verbose_options[j] == "class") {
         log_verbosity.class_linker = true;
-      } else if (verbose_options[j] == "collector") {
-        log_verbosity.collector = true;
       } else if (verbose_options[j] == "compiler") {
         log_verbosity.compiler = true;
-      } else if (verbose_options[j] == "deopt") {
-        log_verbosity.deopt = true;
       } else if (verbose_options[j] == "gc") {
         log_verbosity.gc = true;
       } else if (verbose_options[j] == "heap") {
@@ -608,8 +603,6 @@ struct CmdlineType<LogVerbosity> : CmdlineTypeParser<LogVerbosity> {
         log_verbosity.profiler = true;
       } else if (verbose_options[j] == "signals") {
         log_verbosity.signals = true;
-      } else if (verbose_options[j] == "simulator") {
-        log_verbosity.simulator = true;
       } else if (verbose_options[j] == "startup") {
         log_verbosity.startup = true;
       } else if (verbose_options[j] == "third-party-jni") {
@@ -618,10 +611,6 @@ struct CmdlineType<LogVerbosity> : CmdlineTypeParser<LogVerbosity> {
         log_verbosity.threads = true;
       } else if (verbose_options[j] == "verifier") {
         log_verbosity.verifier = true;
-      } else if (verbose_options[j] == "image") {
-        log_verbosity.image = true;
-      } else if (verbose_options[j] == "systrace-locks") {
-        log_verbosity.systrace_lock_logging = true;
       } else {
         return Result::Usage(std::string("Unknown -verbose option ") + verbose_options[j]);
       }
@@ -847,21 +836,6 @@ struct CmdlineType<TestProfilerOptions> : CmdlineTypeParser<TestProfilerOptions>
   static constexpr bool kCanParseBlankless = true;
 };
 
-template<>
-struct CmdlineType<ExperimentalFlags> : CmdlineTypeParser<ExperimentalFlags> {
-  Result ParseAndAppend(const std::string& option, ExperimentalFlags& existing) {
-    if (option == "none") {
-      existing = ExperimentalFlags::kNone;
-    } else if (option == "lambdas") {
-      existing = existing | ExperimentalFlags::kLambdas;
-    } else {
-      return Result::Failure(std::string("Unknown option '") + option + "'");
-    }
-    return Result::SuccessNoValue();
-  }
-
-  static const char* Name() { return "ExperimentalFlags"; }
-};
 
 }  // namespace art
 #endif  // ART_CMDLINE_CMDLINE_TYPES_H_

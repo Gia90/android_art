@@ -16,7 +16,7 @@
 
 #include "instruction_set_features_arm.h"
 
-#if defined(__ANDROID__) && defined(__arm__)
+#if defined(HAVE_ANDROID_OS) && defined(__arm__)
 #include <sys/auxv.h>
 #include <asm/hwcap.h>
 #endif
@@ -42,15 +42,15 @@ const ArmInstructionSetFeatures* ArmInstructionSetFeatures::FromVariant(
   // Look for variants that have divide support.
   static const char* arm_variants_with_div[] = {
           "cortex-a7", "cortex-a12", "cortex-a15", "cortex-a17", "cortex-a53", "cortex-a57",
-          "cortex-a53.a57", "cortex-m3", "cortex-m4", "cortex-r4", "cortex-r5",
-          "cyclone", "denver", "krait", "swift" };
+          "cortex-m3", "cortex-m4", "cortex-r4", "cortex-r5",
+          "cyclone", "denver", "krait", "swift"};
 
   bool has_div = FindVariantInArray(arm_variants_with_div, arraysize(arm_variants_with_div),
                                     variant);
 
   // Look for variants that have LPAE support.
   static const char* arm_variants_with_lpae[] = {
-      "cortex-a7", "cortex-a15", "krait", "denver", "cortex-a53", "cortex-a57", "cortex-a53.a57"
+      "cortex-a7", "cortex-a15", "krait", "denver"
   };
   bool has_lpae = FindVariantInArray(arm_variants_with_lpae, arraysize(arm_variants_with_lpae),
                                      variant);
@@ -166,7 +166,7 @@ const ArmInstructionSetFeatures* ArmInstructionSetFeatures::FromHwcap() {
   bool has_div = false;
   bool has_lpae = false;
 
-#if defined(__ANDROID__) && defined(__arm__)
+#if defined(HAVE_ANDROID_OS) && defined(__arm__)
   uint64_t hwcaps = getauxval(AT_HWCAP);
   LOG(INFO) << "hwcaps=" << hwcaps;
   if ((hwcaps & HWCAP_IDIVT) != 0) {
@@ -280,7 +280,7 @@ const InstructionSetFeatures* ArmInstructionSetFeatures::AddFeaturesFromSplitStr
       has_atomic_ldrd_strd = false;
     } else {
       *error_msg = StringPrintf("Unknown instruction set feature: '%s'", feature.c_str());
-      LOG(WARNING) << *error_msg;
+      return nullptr;
     }
   }
   return new ArmInstructionSetFeatures(smp, has_div, has_atomic_ldrd_strd);

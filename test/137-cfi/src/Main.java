@@ -16,53 +16,45 @@
 
 import java.io.BufferedReader;
 import java.io.FileReader;
-import java.io.InputStreamReader;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.Comparator;
 
 public class Main implements Comparator<Main> {
-  // Whether to test local unwinding.
-  private boolean testLocal;
+  // Whether to test local unwinding. Libunwind uses linker info to find executables. As we do
+  // not dlopen at the moment, this doesn't work, so keep it off for now.
+  public final static boolean TEST_LOCAL_UNWINDING = true;
 
-  // Unwinding another process, modelling debuggerd.
-  private boolean testRemote;
+  // Unwinding another process, modelling debuggerd. This doesn't use the linker, so should work
+  // no matter whether we're using dlopen or not.
+  public final static boolean TEST_REMOTE_UNWINDING = true;
 
-  // We fork ourself to create the secondary process for remote unwinding.
   private boolean secondary;
-
-  // Expect the symbols to contain full method signatures including parameters.
-  private boolean fullSignatures;
 
   private boolean passed;
 
-  public Main(String[] args) throws Exception {
-      System.loadLibrary(args[0]);
-      for (String arg : args) {
-          if (arg.equals("--test-local")) {
-              testLocal = true;
-          }
-          if (arg.equals("--test-remote")) {
-              testRemote = true;
-          }
-          if (arg.equals("--secondary")) {
-              secondary = true;
-          }
-          if (arg.equals("--full-signatures")) {
-              fullSignatures = true;
-          }
-      }
-      if (!testLocal && !testRemote) {
-          System.out.println("No test selected.");
-      }
+  public Main(boolean secondary) {
+      this.secondary = secondary;
   }
 
   public static void main(String[] args) throws Exception {
-      new Main(args).run();
+      boolean secondary = false;
+      if (args.length > 0 && args[args.length - 1].equals("--secondary")) {
+          secondary = true;
+      }
+      new Main(secondary).run();
+  }
+
+  static {
+      System.loadLibrary("arttest");
   }
 
   private void run() {
       if (secondary) {
-          if (!testRemote) {
+          if (!TEST_REMOTE_UNWINDING) {
               throw new RuntimeException("Should not be running secondary!");
           }
           runSecondary();
@@ -78,11 +70,11 @@ public class Main implements Comparator<Main> {
 
   private void runPrimary() {
       // First do the in-process unwinding.
-      if (testLocal && !foo()) {
+      if (TEST_LOCAL_UNWINDING && !foo()) {
           System.out.println("Unwinding self failed.");
       }
 
-      if (!testRemote) {
+      if (!TEST_REMOTE_UNWINDING) {
           // Skip the remote step.
           return;
       }
@@ -100,17 +92,14 @@ public class Main implements Comparator<Main> {
               throw new RuntimeException("Couldn't parse process");
           }
 
-          // Wait until the forked process had time to run until its sleep phase.
+          // Wait a bit, so the forked process has time to run until its sleep phase.
           try {
-              InputStreamReader stdout = new InputStreamReader(p.getInputStream(), "UTF-8");
-              BufferedReader lineReader = new BufferedReader(stdout);
-              while (!lineReader.readLine().contains("Going to sleep")) {
-              }
+              Thread.sleep(5000);
           } catch (Exception e) {
               throw new RuntimeException(e);
           }
 
-          if (!unwindOtherProcess(fullSignatures, pid)) {
+          if (!unwindOtherProcess(pid)) {
               System.out.println("Unwinding other process failed.");
           }
       } finally {
@@ -131,7 +120,7 @@ public class Main implements Comparator<Main> {
       // Could do reflection for the private pid field, but String parsing is easier.
       String s = p.toString();
       if (s.startsWith("Process[pid=")) {
-          return Integer.parseInt(s.substring("Process[pid=".length(), s.indexOf(",")));
+          return Integer.parseInt(s.substring("Process[pid=".length(), s.length() - 1));
       } else {
           return -1;
       }
@@ -168,7 +157,7 @@ public class Main implements Comparator<Main> {
       if (b) {
           return sleep(2, b, 1.0);
       } else {
-          return unwindInProcess(fullSignatures, 1, b);
+          return unwindInProcess(1, b);
       }
   }
 
@@ -176,6 +165,6 @@ public class Main implements Comparator<Main> {
 
   public native boolean sleep(int i, boolean b, double dummy);
 
-  public native boolean unwindInProcess(boolean fullSignatures, int i, boolean b);
-  public native boolean unwindOtherProcess(boolean fullSignatures, int pid);
+  public native boolean unwindInProcess(int i, boolean b);
+  public native boolean unwindOtherProcess(int pid);
 }

@@ -102,10 +102,11 @@ TEST_F(TaskProcessorTest, Interrupt) {
 
 class TestOrderTask : public HeapTask {
  public:
-  TestOrderTask(uint64_t expected_time, size_t expected_counter, size_t* counter)
+  explicit TestOrderTask(uint64_t expected_time, size_t expected_counter, size_t* counter)
      : HeapTask(expected_time), expected_counter_(expected_counter), counter_(counter) {
   }
-  virtual void Run(Thread* thread ATTRIBUTE_UNUSED) OVERRIDE {
+  virtual void Run(Thread* thread) OVERRIDE {
+    UNUSED(thread);  // Fix cppling bug.
     ASSERT_EQ(*counter_, expected_counter_);
     ++*counter_;
   }

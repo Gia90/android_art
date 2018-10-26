@@ -1,1 +1,1 @@
-Regression test for type conversion precision.
+Tests for type conversions precision.

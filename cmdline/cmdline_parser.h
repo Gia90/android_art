@@ -497,10 +497,11 @@ struct CmdlineParser {
   friend struct Builder;
 
   // Construct a new parser from the builder. Move all the arguments.
-  CmdlineParser(bool ignore_unrecognized,
-                std::vector<const char*>&& ignore_list,
-                std::shared_ptr<SaveDestination> save_destination,
-                std::vector<std::unique_ptr<detail::CmdlineParseArgumentAny>>&& completed_arguments)
+  explicit CmdlineParser(bool ignore_unrecognized,
+                         std::vector<const char*>&& ignore_list,
+                         std::shared_ptr<SaveDestination> save_destination,
+                         std::vector<std::unique_ptr<detail::CmdlineParseArgumentAny>>&&
+                             completed_arguments)
     : ignore_unrecognized_(ignore_unrecognized),
       ignore_list_(std::move(ignore_list)),
       save_destination_(save_destination),
@@ -544,9 +545,10 @@ struct CmdlineParser {
           ++i;
           continue;
         }
-        LOG(WARNING) << "Unknown argument: " << possible_name[0];
-        ++i;
-        continue;
+        // Common case:
+        // Bail out on the first unknown argument with an error.
+        return CmdlineResult(CmdlineResult::kUnknown,
+                             std::string("Unknown argument: ") + possible_name[0]);
       }
 
       // Look at the best-matched argument definition and try to parse against that.

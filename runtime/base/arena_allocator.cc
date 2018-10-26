@@ -23,65 +23,41 @@
 #include "mem_map.h"
 #include "mutex.h"
 #include "thread-inl.h"
-#include "systrace.h"
+#include <memcheck/memcheck.h>
 
 namespace art {
 
-static constexpr size_t kMemoryToolRedZoneBytes = 8;
+static constexpr size_t kValgrindRedZoneBytes = 8;
 constexpr size_t Arena::kDefaultSize;
 
 template <bool kCount>
 const char* const ArenaAllocatorStatsImpl<kCount>::kAllocNames[] = {
-  "Misc         ",
-  "SwitchTbl    ",
-  "SlowPaths    ",
-  "GrowBitMap   ",
-  "STL          ",
-  "GraphBuilder ",
-  "Graph        ",
-  "BasicBlock   ",
-  "BlockList    ",
-  "RevPostOrder ",
-  "LinearOrder  ",
-  "ConstantsMap ",
-  "Predecessors ",
-  "Successors   ",
-  "Dominated    ",
-  "Instruction  ",
-  "InvokeInputs ",
-  "PhiInputs    ",
-  "LoopInfo     ",
-  "LIBackEdges  ",
-  "TryCatchInf  ",
-  "UseListNode  ",
-  "Environment  ",
-  "EnvVRegs     ",
-  "EnvLocations ",
-  "LocSummary   ",
-  "SsaBuilder   ",
-  "MoveOperands ",
-  "CodeBuffer   ",
-  "StackMaps    ",
-  "Optimization ",
-  "GVN          ",
-  "InductionVar ",
-  "BCE          ",
-  "DCE          ",
-  "LSE          ",
-  "LICM         ",
-  "SsaLiveness  ",
-  "SsaPhiElim   ",
-  "RefTypeProp  ",
-  "SideEffects  ",
-  "RegAllocator ",
-  "RegAllocVldt ",
-  "StackMapStm  ",
-  "CodeGen      ",
-  "Assembler    ",
-  "ParallelMove ",
-  "GraphChecker ",
-  "Verifier     ",
-  "CallingConv  ",
+  "Misc       ",
+  "BasicBlock ",
+  "BBList     ",
+  "BBPreds    ",
+  "DfsPreOrd  ",
+  "DfsPostOrd ",
+  "DomPostOrd ",
+  "TopoOrd    ",
+  "Lowering   ",
+  "LIR        ",
+  "LIR masks  ",
+  "SwitchTbl  ",
+  "FillArray  ",
+  "SlowPaths  ",
+  "MIR        ",
+  "DataFlow   ",
+  "GrowList   ",
+  "GrowBitMap ",
+  "SSA2Dalvik ",
+  "Dalvik2SSA ",
+  "DebugInfo  ",
+  "Successor  ",
+  "RegAlloc   ",
+  "Data       ",
+  "Preds      ",
+  "STL        ",
 };
 
 template <bool kCount>
@@ -145,24 +121,11 @@ void ArenaAllocatorStatsImpl<kCount>::Dump(std::ostream& os, const Arena* first,
 // Explicitly instantiate the used implementation.
 template class ArenaAllocatorStatsImpl<kArenaAllocatorCountAllocations>;
 
-void ArenaAllocatorMemoryTool::DoMakeDefined(void* ptr, size_t size) {
-  MEMORY_TOOL_MAKE_DEFINED(ptr, size);
-}
-
-void ArenaAllocatorMemoryTool::DoMakeUndefined(void* ptr, size_t size) {
-  MEMORY_TOOL_MAKE_UNDEFINED(ptr, size);
-}
-
-void ArenaAllocatorMemoryTool::DoMakeInaccessible(void* ptr, size_t size) {
-  MEMORY_TOOL_MAKE_NOACCESS(ptr, size);
-}
-
 Arena::Arena() : bytes_allocated_(0), next_(nullptr) {
 }
 
 MallocArena::MallocArena(size_t size) {
   memory_ = reinterpret_cast<uint8_t*>(calloc(1, size));
-  CHECK(memory_ != nullptr);  // Abort on OOM.
   size_ = size;
 }
 
@@ -170,10 +133,10 @@ MallocArena::~MallocArena() {
   free(reinterpret_cast<void*>(memory_));
 }
 
-MemMapArena::MemMapArena(size_t size, bool low_4gb, const char* name) {
+MemMapArena::MemMapArena(size_t size, bool low_4gb) {
   std::string error_msg;
   map_.reset(MemMap::MapAnonymous(
-      name, nullptr, size, PROT_READ | PROT_WRITE, low_4gb, false, &error_msg));
+      "LinearAlloc", nullptr, size, PROT_READ | PROT_WRITE, low_4gb, false, &error_msg));
   CHECK(map_.get() != nullptr) << error_msg;
   memory_ = map_->Begin();
   size_ = map_->Size();
@@ -197,12 +160,9 @@ void Arena::Reset() {
   }
 }
 
-ArenaPool::ArenaPool(bool use_malloc, bool low_4gb, const char* name)
-    : use_malloc_(use_malloc),
-      lock_("Arena pool lock", kArenaPoolLock),
-      free_arenas_(nullptr),
-      low_4gb_(low_4gb),
-      name_(name) {
+ArenaPool::ArenaPool(bool use_malloc, bool low_4gb)
+    : use_malloc_(use_malloc), lock_("Arena pool lock", kArenaPoolLock), free_arenas_(nullptr),
+      low_4gb_(low_4gb) {
   if (low_4gb) {
     CHECK(!use_malloc) << "low4gb must use map implementation";
   }
@@ -212,20 +172,11 @@ ArenaPool::ArenaPool(bool use_malloc, bool low_4gb, const char* name)
 }
 
 ArenaPool::~ArenaPool() {
-  ReclaimMemory();
-}
-
-void ArenaPool::ReclaimMemory() {
   while (free_arenas_ != nullptr) {
     auto* arena = free_arenas_;
     free_arenas_ = free_arenas_->next_;
     delete arena;
   }
-}
-
-void ArenaPool::LockReclaimMemory() {
-  MutexLock lock(Thread::Current(), lock_);
-  ReclaimMemory();
 }
 
 Arena* ArenaPool::AllocArena(size_t size) {
@@ -240,7 +191,7 @@ Arena* ArenaPool::AllocArena(size_t size) {
   }
   if (ret == nullptr) {
     ret = use_malloc_ ? static_cast<Arena*>(new MallocArena(size)) :
-        new MemMapArena(size, low_4gb_, name_);
+        new MemMapArena(size, low_4gb_);
   }
   ret->Reset();
   return ret;
@@ -248,7 +199,6 @@ Arena* ArenaPool::AllocArena(size_t size) {
 
 void ArenaPool::TrimMaps() {
   if (!use_malloc_) {
-    ScopedTrace trace(__PRETTY_FUNCTION__);
     // Doesn't work for malloc.
     MutexLock lock(Thread::Current(), lock_);
     for (auto* arena = free_arenas_; arena != nullptr; arena = arena->next_) {
@@ -267,9 +217,9 @@ size_t ArenaPool::GetBytesAllocated() const {
 }
 
 void ArenaPool::FreeArenaChain(Arena* first) {
-  if (UNLIKELY(RUNNING_ON_MEMORY_TOOL > 0)) {
+  if (UNLIKELY(RUNNING_ON_VALGRIND > 0)) {
     for (Arena* arena = first; arena != nullptr; arena = arena->next_) {
-      MEMORY_TOOL_MAKE_UNDEFINED(arena->memory_, arena->bytes_allocated_);
+      VALGRIND_MAKE_MEM_UNDEFINED(arena->memory_, arena->bytes_allocated_);
     }
   }
   if (first != nullptr) {
@@ -304,7 +254,8 @@ ArenaAllocator::ArenaAllocator(ArenaPool* pool)
     begin_(nullptr),
     end_(nullptr),
     ptr_(nullptr),
-    arena_head_(nullptr) {
+    arena_head_(nullptr),
+    running_on_valgrind_(RUNNING_ON_VALGRIND > 0) {
 }
 
 void ArenaAllocator::UpdateBytesAllocated() {
@@ -315,35 +266,23 @@ void ArenaAllocator::UpdateBytesAllocated() {
   }
 }
 
-void* ArenaAllocator::AllocWithMemoryTool(size_t bytes, ArenaAllocKind kind) {
-  // We mark all memory for a newly retrieved arena as inaccessible and then
-  // mark only the actually allocated memory as defined. That leaves red zones
-  // and padding between allocations marked as inaccessible.
-  size_t rounded_bytes = RoundUp(bytes + kMemoryToolRedZoneBytes, 8);
-  ArenaAllocatorStats::RecordAlloc(rounded_bytes, kind);
-  uint8_t* ret;
-  if (UNLIKELY(rounded_bytes > static_cast<size_t>(end_ - ptr_))) {
-    ret = AllocFromNewArena(rounded_bytes);
-    uint8_t* noaccess_begin = ret + bytes;
-    uint8_t* noaccess_end;
-    if (ret == arena_head_->Begin()) {
-      DCHECK(ptr_ - rounded_bytes == ret);
-      noaccess_end = end_;
-    } else {
-      // We're still using the old arena but `ret` comes from a new one just after it.
-      DCHECK(arena_head_->next_ != nullptr);
-      DCHECK(ret == arena_head_->next_->Begin());
-      DCHECK_EQ(rounded_bytes, arena_head_->next_->GetBytesAllocated());
-      noaccess_end = arena_head_->next_->End();
+void* ArenaAllocator::AllocValgrind(size_t bytes, ArenaAllocKind kind) {
+  size_t rounded_bytes = RoundUp(bytes + kValgrindRedZoneBytes, 8);
+  if (UNLIKELY(ptr_ + rounded_bytes > end_)) {
+    // Obtain a new block.
+    ObtainNewArenaForAllocation(rounded_bytes);
+    if (UNLIKELY(ptr_ == nullptr)) {
+      return nullptr;
     }
-    MEMORY_TOOL_MAKE_NOACCESS(noaccess_begin, noaccess_end - noaccess_begin);
-  } else {
-    ret = ptr_;
-    ptr_ += rounded_bytes;
   }
-  MEMORY_TOOL_MAKE_DEFINED(ret, bytes);
+  ArenaAllocatorStats::RecordAlloc(rounded_bytes, kind);
+  uint8_t* ret = ptr_;
+  ptr_ += rounded_bytes;
   // Check that the memory is already zeroed out.
-  DCHECK(std::all_of(ret, ret + bytes, [](uint8_t val) { return val == 0u; }));
+  for (uint8_t* ptr = ret; ptr < ptr_; ++ptr) {
+    CHECK_EQ(*ptr, 0U);
+  }
+  VALGRIND_MAKE_MEM_NOACCESS(ret + bytes, rounded_bytes - bytes);
   return ret;
 }
 
@@ -353,27 +292,14 @@ ArenaAllocator::~ArenaAllocator() {
   pool_->FreeArenaChain(arena_head_);
 }
 
-uint8_t* ArenaAllocator::AllocFromNewArena(size_t bytes) {
-  Arena* new_arena = pool_->AllocArena(std::max(Arena::kDefaultSize, bytes));
-  DCHECK(new_arena != nullptr);
-  DCHECK_LE(bytes, new_arena->Size());
-  if (static_cast<size_t>(end_ - ptr_) > new_arena->Size() - bytes) {
-    // The old arena has more space remaining than the new one, so keep using it.
-    // This can happen when the requested size is over half of the default size.
-    DCHECK(arena_head_ != nullptr);
-    new_arena->bytes_allocated_ = bytes;  // UpdateBytesAllocated() on the new_arena.
-    new_arena->next_ = arena_head_->next_;
-    arena_head_->next_ = new_arena;
-  } else {
-    UpdateBytesAllocated();
-    new_arena->next_ = arena_head_;
-    arena_head_ = new_arena;
-    // Update our internal data structures.
-    begin_ = new_arena->Begin();
-    ptr_ = begin_ + bytes;
-    end_ = new_arena->End();
-  }
-  return new_arena->Begin();
+void ArenaAllocator::ObtainNewArenaForAllocation(size_t allocation_size) {
+  UpdateBytesAllocated();
+  Arena* new_arena = pool_->AllocArena(std::max(Arena::kDefaultSize, allocation_size));
+  new_arena->next_ = arena_head_;
+  arena_head_ = new_arena;
+  // Update our internal data structures.
+  ptr_ = begin_ = new_arena->Begin();
+  end_ = new_arena->End();
 }
 
 bool ArenaAllocator::Contains(const void* ptr) const {

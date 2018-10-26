@@ -12,6 +12,9 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Modified by Intel Corporation
+ *
  */
 
 #ifndef ART_RUNTIME_THREAD_INL_H_
@@ -19,17 +22,12 @@
 
 #include "thread.h"
 
-#ifdef __ANDROID__
-#include <bionic_tls.h>  // Access to our own TLS slot.
-#endif
-
 #include <pthread.h>
 
 #include "base/casts.h"
 #include "base/mutex-inl.h"
 #include "gc/heap.h"
 #include "jni_env_ext.h"
-#include "thread_pool.h"
 
 namespace art {
 
@@ -45,11 +43,7 @@ inline Thread* Thread::Current() {
   if (!is_started_) {
     return nullptr;
   } else {
-#ifdef __ANDROID__
-    void* thread = __get_tls()[TLS_SLOT_ART_THREAD_SELF];
-#else
     void* thread = pthread_getspecific(Thread::pthread_key_self_);
-#endif
     return reinterpret_cast<Thread*>(thread);
   }
 }
@@ -118,8 +112,11 @@ inline void Thread::AssertThreadSuspensionIsAllowable(bool check_locks) const {
   }
 }
 
-inline void Thread::TransitionToSuspendedAndRunCheckpoints(ThreadState new_state) {
+inline void Thread::TransitionFromRunnableToSuspended(ThreadState new_state) {
+  AssertThreadSuspensionIsAllowable();
   DCHECK_NE(new_state, kRunnable);
+  DCHECK_EQ(this, Thread::Current());
+  // Change to non-runnable state, thereby appearing suspended to the system.
   DCHECK_EQ(GetState(), kRunnable);
   union StateAndFlags old_state_and_flags;
   union StateAndFlags new_state_and_flags;
@@ -142,9 +139,12 @@ inline void Thread::TransitionToSuspendedAndRunCheckpoints(ThreadState new_state
       break;
     }
   }
-}
 
-inline void Thread::PassActiveSuspendBarriers() {
+  // Change to non-runnable state, thereby appearing suspended to the system.
+  // Mark the release of the share of the mutator_lock_.
+  Locks::mutator_lock_->TransitionFromRunnableToSuspended(this);
+
+  // Once suspended - check the active suspend barrier flag
   while (true) {
     uint16_t current_flags = tls32_.state_and_flags.as_struct.flags;
     if (LIKELY((current_flags & (kCheckpointRequest | kActiveSuspendBarrier)) == 0)) {
@@ -153,20 +153,9 @@ inline void Thread::PassActiveSuspendBarriers() {
       PassActiveSuspendBarriers(this);
     } else {
       // Impossible
-      LOG(FATAL) << "Fatal, thread transitioned into suspended without running the checkpoint";
+      LOG(FATAL) << "Fatal, thread transited into suspended without running the checkpoint";
     }
   }
-}
-
-inline void Thread::TransitionFromRunnableToSuspended(ThreadState new_state) {
-  AssertThreadSuspensionIsAllowable();
-  DCHECK_EQ(this, Thread::Current());
-  // Change to non-runnable state, thereby appearing suspended to the system.
-  TransitionToSuspendedAndRunCheckpoints(new_state);
-  // Mark the release of the share of the mutator_lock_.
-  Locks::mutator_lock_->TransitionFromRunnableToSuspended(this);
-  // Once suspended - check the active suspend barrier flag
-  PassActiveSuspendBarriers();
 }
 
 inline ThreadState Thread::TransitionFromSuspendedToRunnable() {
@@ -196,9 +185,7 @@ inline ThreadState Thread::TransitionFromSuspendedToRunnable() {
       PassActiveSuspendBarriers(this);
     } else if ((old_state_and_flags.as_struct.flags & kCheckpointRequest) != 0) {
       // Impossible
-      LOG(FATAL) << "Transitioning to runnable with checkpoint flag, "
-                 << " flags=" << old_state_and_flags.as_struct.flags
-                 << " state=" << old_state_and_flags.as_struct.state;
+      LOG(FATAL) << "Fatal, wrong checkpoint flag";
     } else if ((old_state_and_flags.as_struct.flags & kSuspendRequest) != 0) {
       // Wait while our suspend count is non-zero.
       MutexLock mu(this, *Locks::thread_suspend_count_lock_);
@@ -239,6 +226,12 @@ inline mirror::Object* Thread::AllocTlab(size_t bytes) {
   mirror::Object* ret = reinterpret_cast<mirror::Object*>(tlsPtr_.thread_local_pos);
   tlsPtr_.thread_local_pos += bytes;
   return ret;
+}
+
+inline void Thread::RollBackTlab(size_t bytes) {
+  --tlsPtr_.thread_local_objects;
+  tlsPtr_.thread_local_pos -= bytes;
+  return;
 }
 
 inline bool Thread::PushOnThreadLocalAllocationStack(mirror::Object* obj) {

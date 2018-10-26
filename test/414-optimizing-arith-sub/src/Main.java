@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-// Note that $opt$ is a marker for the optimizing compiler to test
+// Note that $opt$ is a marker for the optimizing compiler to ensure
 // it does compile the method.
 public class Main {
 

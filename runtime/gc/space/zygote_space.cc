@@ -31,7 +31,8 @@ class CountObjectsAllocated {
   explicit CountObjectsAllocated(size_t* objects_allocated)
       : objects_allocated_(objects_allocated) {}
 
-  void operator()(mirror::Object* obj ATTRIBUTE_UNUSED) const {
+  void operator()(mirror::Object* obj) const {
+    UNUSED(obj);
     ++*objects_allocated_;
   }
 

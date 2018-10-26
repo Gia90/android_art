@@ -12,50 +12,31 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Modified by Intel Corporation
+ *
  */
 
 #ifndef ART_RUNTIME_GC_COLLECTOR_GARBAGE_COLLECTOR_H_
 #define ART_RUNTIME_GC_COLLECTOR_GARBAGE_COLLECTOR_H_
-
-#include <stdint.h>
-#include <vector>
 
 #include "base/histogram.h"
 #include "base/mutex.h"
 #include "base/timing_logger.h"
 #include "gc/collector_type.h"
 #include "gc/gc_cause.h"
+#include "gc/object_byte_pair.h"
 #include "gc_root.h"
 #include "gc_type.h"
-#include "object_callbacks.h"
+#include <stdint.h>
+#include <vector>
 
 namespace art {
-
-namespace mirror {
-class Class;
-class Object;
-class Reference;
-}  // namespace mirror
-
 namespace gc {
 
 class Heap;
 
 namespace collector {
-
-struct ObjectBytePair {
-  ObjectBytePair(uint64_t num_objects = 0, int64_t num_bytes = 0)
-      : objects(num_objects), bytes(num_bytes) {}
-  void Add(const ObjectBytePair& other) {
-    objects += other.objects;
-    bytes += other.bytes;
-  }
-  // Number of objects which were freed.
-  uint64_t objects;
-  // Freed bytes are signed since the GC can free negative bytes if it promotes objects to a space
-  // which has a larger allocation size.
-  int64_t bytes;
-};
 
 // A information related single garbage collector iteration. Since we only ever have one GC running
 // at any given time, we can have a single iteration info.
@@ -65,6 +46,14 @@ class Iteration {
   // Returns how long the mutators were paused in nanoseconds.
   const std::vector<uint64_t>& GetPauseTimes() const {
     return pause_times_;
+  }
+  // Returns mark time.
+  uint64_t GetMarkTime() const {
+    return mark_time_;
+  }
+  // Returns sweep time.
+  uint64_t GetSweepTime() const {
+    return sweep_time_;
   }
   TimingLogger* GetTimings() {
     return &timings_;
@@ -117,12 +106,15 @@ class Iteration {
   ObjectBytePair freed_los_;
   uint64_t freed_bytes_revoke_;  // see Heap::num_bytes_freed_revoke_.
   std::vector<uint64_t> pause_times_;
+  // Mark/sweep times for gc profiling.
+  uint64_t mark_time_;
+  uint64_t sweep_time_;
 
   friend class GarbageCollector;
   DISALLOW_COPY_AND_ASSIGN(Iteration);
 };
 
-class GarbageCollector : public RootVisitor, public IsMarkedVisitor, public MarkObjectVisitor {
+class GarbageCollector : public RootVisitor {
  public:
   class SCOPED_LOCKABLE ScopedPause {
    public:
@@ -142,21 +134,22 @@ class GarbageCollector : public RootVisitor, public IsMarkedVisitor, public Mark
   virtual GcType GetGcType() const = 0;
   virtual CollectorType GetCollectorType() const = 0;
   // Run the garbage collector.
-  void Run(GcCause gc_cause, bool clear_soft_references) REQUIRES(!pause_histogram_lock_);
+  void Run(GcCause gc_cause, bool clear_soft_references);
   Heap* GetHeap() const {
     return heap_;
   }
   void RegisterPause(uint64_t nano_length);
+  // Register times for gc profiling.
+  void RegisterMark(uint64_t nano_length);
+  void RegisterSweep(uint64_t nano_length);
   const CumulativeLogger& GetCumulativeTimings() const {
     return cumulative_timings_;
   }
-  void ResetCumulativeStatistics() REQUIRES(!pause_histogram_lock_);
+  void ResetCumulativeStatistics();
   // Swap the live and mark bitmaps of spaces that are active for the collector. For partial GC,
   // this is the allocation space, for full GC then we swap the zygote bitmaps too.
-  void SwapBitmaps()
-      REQUIRES(Locks::heap_bitmap_lock_)
-      SHARED_REQUIRES(Locks::mutator_lock_);
-  uint64_t GetTotalPausedTimeNs() REQUIRES(!pause_histogram_lock_);
+  void SwapBitmaps() EXCLUSIVE_LOCKS_REQUIRED(Locks::heap_bitmap_lock_);
+  uint64_t GetTotalPausedTimeNs() LOCKS_EXCLUDED(pause_histogram_lock_);
   int64_t GetTotalFreedBytes() const {
     return total_freed_bytes_;
   }
@@ -164,7 +157,7 @@ class GarbageCollector : public RootVisitor, public IsMarkedVisitor, public Mark
     return total_freed_objects_;
   }
   // Reset the cumulative timings and pause histogram.
-  void ResetMeasurements() REQUIRES(!pause_histogram_lock_);
+  void ResetMeasurements();
   // Returns the estimated throughput in bytes / second.
   uint64_t GetEstimatedMeanThroughput() const;
   // Returns how many GC iterations have been run.
@@ -181,23 +174,7 @@ class GarbageCollector : public RootVisitor, public IsMarkedVisitor, public Mark
   void RecordFree(const ObjectBytePair& freed);
   // Record a free of large objects.
   void RecordFreeLOS(const ObjectBytePair& freed);
-  void DumpPerformanceInfo(std::ostream& os) REQUIRES(!pause_histogram_lock_);
-
-  // Helper functions for querying if objects are marked. These are used for processing references,
-  // and will be used for reading system weaks while the GC is running.
-  virtual mirror::Object* IsMarked(mirror::Object* obj)
-      SHARED_REQUIRES(Locks::mutator_lock_) = 0;
-  virtual bool IsMarkedHeapReference(mirror::HeapReference<mirror::Object>* obj)
-      SHARED_REQUIRES(Locks::mutator_lock_) = 0;
-  // Used by reference processor.
-  virtual void ProcessMarkStack() SHARED_REQUIRES(Locks::mutator_lock_) = 0;
-  // Force mark an object.
-  virtual mirror::Object* MarkObject(mirror::Object* obj)
-      SHARED_REQUIRES(Locks::mutator_lock_) = 0;
-  virtual void MarkHeapReference(mirror::HeapReference<mirror::Object>* obj)
-      SHARED_REQUIRES(Locks::mutator_lock_) = 0;
-  virtual void DelayReferenceReferent(mirror::Class* klass, mirror::Reference* reference)
-      SHARED_REQUIRES(Locks::mutator_lock_) = 0;
+  void DumpPerformanceInfo(std::ostream& os) LOCKS_EXCLUDED(pause_histogram_lock_);
 
  protected:
   // Run all of the GC phases.

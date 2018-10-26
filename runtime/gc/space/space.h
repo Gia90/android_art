@@ -12,6 +12,9 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Modified by Intel Corporation
+ *
  */
 
 #ifndef ART_RUNTIME_GC_SPACE_SPACE_H_
@@ -219,7 +222,7 @@ class AllocSpace {
   virtual mirror::Object* AllocThreadUnsafe(Thread* self, size_t num_bytes, size_t* bytes_allocated,
                                             size_t* usable_size,
                                             size_t* bytes_tl_bulk_allocated)
-      REQUIRES(Locks::mutator_lock_) {
+      EXCLUSIVE_LOCKS_REQUIRED(Locks::mutator_lock_) {
     return Alloc(self, num_bytes, bytes_allocated, usable_size, bytes_tl_bulk_allocated);
   }
 
@@ -252,7 +255,7 @@ class AllocSpace {
     const bool swap_bitmaps;
     space::Space* const space;
     Thread* const self;
-    collector::ObjectBytePair freed;
+    ObjectBytePair freed;
   };
 
   AllocSpace() {}
@@ -420,9 +423,10 @@ class ContinuousMemMapAllocSpace : public MemMapSpace, public AllocSpace {
     return this;
   }
 
-  bool HasBoundBitmaps() const REQUIRES(Locks::heap_bitmap_lock_);
-  void BindLiveToMarkBitmap() REQUIRES(Locks::heap_bitmap_lock_);
-  void UnBindBitmaps() REQUIRES(Locks::heap_bitmap_lock_);
+  bool HasBoundBitmaps() const EXCLUSIVE_LOCKS_REQUIRED(Locks::heap_bitmap_lock_);
+  void BindLiveToMarkBitmap()
+      EXCLUSIVE_LOCKS_REQUIRED(Locks::heap_bitmap_lock_);
+  void UnBindBitmaps() EXCLUSIVE_LOCKS_REQUIRED(Locks::heap_bitmap_lock_);
   // Swap the live and mark bitmaps of this space. This is used by the GC for concurrent sweeping.
   void SwapBitmaps();
 
@@ -437,7 +441,7 @@ class ContinuousMemMapAllocSpace : public MemMapSpace, public AllocSpace {
     return mark_bitmap_.get();
   }
 
-  collector::ObjectBytePair Sweep(bool swap_bitmaps);
+  ObjectBytePair Sweep(bool swap_bitmaps);
   virtual accounting::ContinuousSpaceBitmap::SweepCallback* GetSweepCallback() = 0;
 
  protected:

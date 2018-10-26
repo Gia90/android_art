@@ -12,6 +12,9 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Modified by Intel Corporation
+ *
  */
 
 #include "jni_compiler.h"
@@ -22,7 +25,6 @@
 #include <fstream>
 
 #include "art_method.h"
-#include "base/arena_allocator.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "calling_convention.h"
@@ -34,6 +36,8 @@
 #include "entrypoints/quick/quick_entrypoints.h"
 #include "jni_env_ext.h"
 #include "utils/assembler.h"
+#include "utils/x86/assembler_x86.h"
+#include "utils/x86_64/assembler_x86_64.h"
 #include "utils/managed_register.h"
 #include "utils/arm/managed_register_arm.h"
 #include "utils/arm64/managed_register_arm64.h"
@@ -46,11 +50,14 @@
 
 namespace art {
 
-static void CopyParameter(Assembler* jni_asm,
+// This is a workaround. We have to specify noinline attribute
+// here to prevent compiler from inlining, otherwise we exceed
+// stack frame size set by option -Wframe-larger-than=1728.
+static void __attribute__((noinline)) CopyParameter(Assembler* jni_asm,
                           ManagedRuntimeCallingConvention* mr_conv,
                           JniCallingConvention* jni_conv,
                           size_t frame_size, size_t out_arg_size);
-static void SetNativeParameter(Assembler* jni_asm,
+static void __attribute__((noinline)) SetNativeParameter(Assembler* jni_asm,
                                JniCallingConvention* jni_conv,
                                ManagedRegister in_reg);
 
@@ -68,20 +75,14 @@ CompiledMethod* ArtJniCompileMethodInternal(CompilerDriver* driver,
   const bool is_synchronized = (access_flags & kAccSynchronized) != 0;
   const char* shorty = dex_file.GetMethodShorty(dex_file.GetMethodId(method_idx));
   InstructionSet instruction_set = driver->GetInstructionSet();
-  const InstructionSetFeatures* instruction_set_features = driver->GetInstructionSetFeatures();
   const bool is_64_bit_target = Is64BitInstructionSet(instruction_set);
-
-  ArenaPool pool;
-  ArenaAllocator arena(&pool);
-
   // Calling conventions used to iterate over parameters to method
   std::unique_ptr<JniCallingConvention> main_jni_conv(
-      JniCallingConvention::Create(&arena, is_static, is_synchronized, shorty, instruction_set));
+      JniCallingConvention::Create(is_static, is_synchronized, shorty, instruction_set));
   bool reference_return = main_jni_conv->IsReturnAReference();
 
   std::unique_ptr<ManagedRuntimeCallingConvention> mr_conv(
-      ManagedRuntimeCallingConvention::Create(
-          &arena, is_static, is_synchronized, shorty, instruction_set));
+      ManagedRuntimeCallingConvention::Create(is_static, is_synchronized, shorty, instruction_set));
 
   // Calling conventions to call into JNI method "end" possibly passing a returned reference, the
   //     method and the current thread.
@@ -96,13 +97,12 @@ CompiledMethod* ArtJniCompileMethodInternal(CompilerDriver* driver,
     jni_end_shorty = "V";
   }
 
-  std::unique_ptr<JniCallingConvention> end_jni_conv(JniCallingConvention::Create(
-      &arena, is_static, is_synchronized, jni_end_shorty, instruction_set));
+  std::unique_ptr<JniCallingConvention> end_jni_conv(
+      JniCallingConvention::Create(is_static, is_synchronized, jni_end_shorty, instruction_set));
 
   // Assembler that holds generated instructions
-  std::unique_ptr<Assembler> jni_asm(
-      Assembler::Create(&arena, instruction_set, instruction_set_features));
-  jni_asm->cfi().SetEnabled(driver->GetCompilerOptions().GenerateAnyDebugInfo());
+  std::unique_ptr<Assembler> jni_asm(Assembler::Create(instruction_set));
+  jni_asm->cfi().SetEnabled(driver->GetCompilerOptions().GetGenerateDebugInfo());
 
   // Offsets into data structures
   // TODO: if cross compiling these offsets are for the host not the target
@@ -146,7 +146,7 @@ CompiledMethod* ArtJniCompileMethodInternal(CompilerDriver* driver,
     FrameOffset handle_scope_offset = main_jni_conv->CurrentParamHandleScopeEntryOffset();
     // Check handle scope offset is within frame
     CHECK_LT(handle_scope_offset.Uint32Value(), frame_size);
-    // Note this LoadRef() doesn't need heap unpoisoning since it's from the ArtMethod.
+    // Note this LoadRef() doesn't need heap poisoning since its from the ArtMethod.
     // Note this LoadRef() does not include read barrier. It will be handled below.
     __ LoadRef(main_jni_conv->InterproceduralScratchRegister(),
                mr_conv->MethodRegister(), ArtMethod::DeclaringClassOffset(), false);
@@ -251,6 +251,88 @@ CompiledMethod* ArtJniCompileMethodInternal(CompilerDriver* driver,
                                                 : QUICK_ENTRYPOINT_OFFSET(8, pJniMethodStart);
   main_jni_conv->ResetIterator(FrameOffset(main_out_arg_size));
   FrameOffset locked_object_handle_scope_offset(0);
+
+  FrameOffset saved_cookie_offset = main_jni_conv->SavedLocalReferenceCookieOffset();
+  Offset local_ref_cookie_offset =
+    JNIEnvExt::LocalRefCookieOffset(InstructionSetPointerSize(instruction_set));
+  Offset segment_state_offset =
+    JNIEnvExt::SegmentStateOffset(InstructionSetPointerSize(instruction_set));
+  MemberOffset access_flags_offset = ArtMethod::AccessFlagsOffset();
+  uint32_t mask = kAccFastNative | kAccNative | kAccSynchronized;
+  uint32_t value = kAccFastNative | kAccNative;
+  Label if_end;
+
+  if (instruction_set == kX86) {
+    x86::X86Assembler* jni_asm_x86 =
+      reinterpret_cast<x86::X86Assembler*>(jni_asm.get());
+    x86::Register scratch_reg =
+      main_jni_conv->InterproceduralScratchRegister().AsX86().AsCpuRegister();
+
+    jni_start32 = is_synchronized ? QUICK_ENTRYPOINT_OFFSET(4, pJniMethodStartSynchronizedFromCode)
+      : QUICK_ENTRYPOINT_OFFSET(4, pJniMethodStartFromCode);
+
+    // load JniEnv* from TLS.
+    ManagedRegister jni_env_reg(x86::X86ManagedRegister::FromCpuRegister(x86::EDI));
+    DCHECK(!jni_env_reg.Equals(main_jni_conv->InterproceduralScratchRegister()));
+    jni_asm_x86->LoadRawPtrFromThread32(jni_env_reg, Thread::JniEnvOffset<4>());
+
+    // load JNIEnv::local_ref_cookie and save to stack.
+    jni_asm_x86->movl(scratch_reg,
+                      x86::Address(jni_env_reg.AsX86().AsCpuRegister(),
+                                   local_ref_cookie_offset));
+    jni_asm_x86->Store(saved_cookie_offset,
+                       main_jni_conv->InterproceduralScratchRegister(), 4);
+    // set env->local_ref_cookie by env->locals.GetSegmentState().
+    jni_asm_x86->movl(scratch_reg,
+                      x86::Address(jni_env_reg.AsX86().AsCpuRegister(),
+                                   segment_state_offset));
+    jni_asm_x86->movl(x86::Address(jni_env_reg.AsX86().AsCpuRegister(),
+                                   local_ref_cookie_offset),
+                      scratch_reg);
+
+    // load and test ArtMethod::access_flags_.
+    jni_asm_x86->movl(scratch_reg,
+                      x86::Address(mr_conv->MethodRegister().AsX86().AsCpuRegister(),
+                                   access_flags_offset));
+    jni_asm_x86->andl(scratch_reg, x86::Immediate(mask));
+    jni_asm_x86->cmpl(scratch_reg, x86::Immediate(value));
+    jni_asm_x86->j(x86::kEqual, &if_end);
+  } else if (instruction_set == kX86_64) {
+    x86_64::X86_64Assembler* jni_asm_x86_64 =
+      reinterpret_cast<x86_64::X86_64Assembler*>(jni_asm.get());
+    x86_64::CpuRegister scratch_reg =
+      main_jni_conv->InterproceduralScratchRegister().AsX86_64().AsCpuRegister();
+
+    jni_start64 = is_synchronized ? QUICK_ENTRYPOINT_OFFSET(8, pJniMethodStartSynchronizedFromCode)
+      : QUICK_ENTRYPOINT_OFFSET(8, pJniMethodStartFromCode);
+
+    // load JniEnv* from TLS.
+    ManagedRegister jni_env_reg(x86_64::X86_64ManagedRegister::FromCpuRegister(x86_64::R12));
+    DCHECK(!jni_env_reg.Equals(main_jni_conv->InterproceduralScratchRegister()));
+    jni_asm_x86_64->LoadRawPtrFromThread64(jni_env_reg, Thread::JniEnvOffset<8>());
+    // load JNIEnv::local_ref_cookie and save to stack.
+    jni_asm_x86_64->movl(scratch_reg,
+                         x86_64::Address(jni_env_reg.AsX86_64().AsCpuRegister(),
+                                         local_ref_cookie_offset));
+    jni_asm_x86_64->Store(saved_cookie_offset,
+                          main_jni_conv->InterproceduralScratchRegister(), 4);
+    // set env->local_ref_cookie by env->locals.GetSegmentState().
+    jni_asm_x86_64->movl(scratch_reg,
+                         x86_64::Address(jni_env_reg.AsX86_64().AsCpuRegister(),
+                                         segment_state_offset));
+    jni_asm_x86_64->movl(x86_64::Address(jni_env_reg.AsX86_64().AsCpuRegister(),
+                                         local_ref_cookie_offset),
+                         scratch_reg);
+
+    // load and test ArtMethod::access_flags_.
+    jni_asm_x86_64->movl(scratch_reg,
+                         x86_64::Address(mr_conv->MethodRegister().AsX86_64().AsCpuRegister(),
+                                         access_flags_offset));
+    jni_asm_x86_64->andl(scratch_reg, x86_64::Immediate(mask));
+    jni_asm_x86_64->cmpl(scratch_reg, x86_64::Immediate(value));
+    jni_asm_x86_64->j(x86_64::kEqual, &if_end);
+  }
+
   if (is_synchronized) {
     // Pass object for locking.
     main_jni_conv->Next();  // Skip JNIEnv.
@@ -288,8 +370,16 @@ CompiledMethod* ArtJniCompileMethodInternal(CompilerDriver* driver,
   if (is_synchronized) {  // Check for exceptions from monitor enter.
     __ ExceptionPoll(main_jni_conv->InterproceduralScratchRegister(), main_out_arg_size);
   }
-  FrameOffset saved_cookie_offset = main_jni_conv->SavedLocalReferenceCookieOffset();
-  __ Store(saved_cookie_offset, main_jni_conv->IntReturnRegister(), 4);
+  if (!(instruction_set == kX86 || instruction_set == kX86_64)) {
+    __ Store(saved_cookie_offset, main_jni_conv->IntReturnRegister(), 4);
+  }
+
+  if (instruction_set == kX86) {
+    reinterpret_cast<x86::X86Assembler*>(jni_asm.get())->Bind(&if_end);
+  } else if (instruction_set == kX86_64) {
+    reinterpret_cast<x86_64::X86_64Assembler*>(jni_asm.get())->Bind(&if_end);
+  }
+
 
   // 7. Iterate over arguments placing values from managed calling convention in
   //    to the convention required for a native call (shuffling). For references
@@ -482,7 +572,7 @@ CompiledMethod* ArtJniCompileMethodInternal(CompilerDriver* driver,
   DCHECK_EQ(jni_asm->cfi().GetCurrentCFAOffset(), static_cast<int>(frame_size));
 
   // 17. Finalize code generation
-  __ FinalizeCode();
+  __ EmitSlowPaths();
   size_t cs = __ CodeSize();
   std::vector<uint8_t> managed_code(cs);
   MemoryRegion code(&managed_code[0], managed_code.size());
@@ -494,9 +584,10 @@ CompiledMethod* ArtJniCompileMethodInternal(CompilerDriver* driver,
                                                  frame_size,
                                                  main_jni_conv->CoreSpillMask(),
                                                  main_jni_conv->FpSpillMask(),
-                                                 ArrayRef<const uint32_t>(), // called_methods.
-                                                 ArrayRef<const SrcMapElem>(),
+                                                 nullptr,  // src_mapping_table.
+                                                 ArrayRef<const uint8_t>(),  // mapping_table.
                                                  ArrayRef<const uint8_t>(),  // vmap_table.
+                                                 ArrayRef<const uint8_t>(),  // native_gc_map.
                                                  ArrayRef<const uint8_t>(*jni_asm->cfi().data()),
                                                  ArrayRef<const LinkerPatch>());
 }

@@ -16,30 +16,27 @@
 
 public class Main {
   public static void main(String[] args) {
-    System.out.println($noinline$FloatConvert(false));
-    System.out.println($noinline$DoubleConvert(false));
+    System.out.println(floatConvert(false));
+    System.out.println(doubleConvert(false));
   }
 
-  // A dummy value to defeat inlining of these routines.
-  static boolean doThrow = false;
-
-  public static long $noinline$FloatConvert(boolean flag) {
-    // Try defeating inlining.
-    if (doThrow) {
-      throw new Error();
+  public static long floatConvert(boolean flag) {
+    if (flag) {
+      // Try defeating inlining.
+      floatConvert(false);
     }
     long l = myLong;
     myFloat = (float)l;
     return l;
   }
 
-  public static long $noinline$DoubleConvert(boolean flag) {
-    // Try defeating inlining.
-    if (doThrow) {
-      throw new Error();
+  public static long doubleConvert(boolean flag) {
+    if (flag) {
+      // Try defeating inlining.
+      floatConvert(false);
     }
     long l = myLong;
-    myDouble = (double)l;
+    myFloat = (float)l;
     return l;
   }
 

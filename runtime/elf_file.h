@@ -38,22 +38,15 @@ typedef ElfFileImpl<ElfTypes64> ElfFileImpl64;
 // ELFObjectFile.
 class ElfFile {
  public:
-  static ElfFile* Open(File* file,
-                       bool writable,
-                       bool program_header_only,
-                       bool low_4gb,
-                       std::string* error_msg,
+  static ElfFile* Open(File* file, bool writable, bool program_header_only, std::string* error_msg,
                        uint8_t* requested_base = nullptr);  // TODO: move arg to before error_msg.
   // Open with specific mmap flags, Always maps in the whole file, not just the
   // program header sections.
-  static ElfFile* Open(File* file,
-                       int mmap_prot,
-                       int mmap_flags,
-                       std::string* error_msg);
+  static ElfFile* Open(File* file, int mmap_prot, int mmap_flags, std::string* error_msg);
   ~ElfFile();
 
   // Load segments into memory based on PT_LOAD program headers
-  bool Load(File* file, bool executable, bool low_4gb, std::string* error_msg);
+  bool Load(bool executable, std::string* error_msg);
 
   const uint8_t* FindDynamicSymbolAddress(const std::string& symbol_name) const;
 
@@ -65,11 +58,9 @@ class ElfFile {
   // The end of the memory map address range for this ELF file.
   uint8_t* End() const;
 
-  const std::string& GetFilePath() const;
+  const File& GetFile() const;
 
-  bool GetSectionOffsetAndSize(const char* section_name, uint64_t* offset, uint64_t* size) const;
-
-  bool HasSection(const std::string& name) const;
+  bool GetSectionOffsetAndSize(const char* section_name, uint64_t* offset, uint64_t* size);
 
   uint64_t FindSymbolAddress(unsigned section_type,
                              const std::string& symbol_name,

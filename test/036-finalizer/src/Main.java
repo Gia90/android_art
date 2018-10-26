@@ -34,10 +34,31 @@ public class Main {
     }
 
     public static WeakReference<FinalizerTest> makeRef() {
-        FinalizerTest ft = new FinalizerTest("wahoo");
-        WeakReference<FinalizerTest> ref = new WeakReference<FinalizerTest>(ft);
-        ft = null;
-        return ref;
+        /*
+         * Make ft in another thread, so there is no danger of
+         * a conservative reference leaking onto the main thread's
+         * stack.
+         */
+
+        final List<WeakReference<FinalizerTest>> wimp =
+                new ArrayList<WeakReference<FinalizerTest>>();
+        Thread t = new Thread() {
+                public void run() {
+                    FinalizerTest ft = new FinalizerTest("wahoo");
+                    wimp.add(new WeakReference<FinalizerTest>(ft));
+                    ft = null;
+                }
+            };
+
+        t.start();
+
+        try {
+            t.join();
+        } catch (InterruptedException ie) {
+            throw new RuntimeException(ie);
+        }
+
+        return wimp.get(0);
     }
 
     public static String wimpString(final WeakReference<FinalizerTest> wimp) {

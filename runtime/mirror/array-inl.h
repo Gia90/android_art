@@ -100,8 +100,9 @@ class SetLengthVisitor {
   explicit SetLengthVisitor(int32_t length) : length_(length) {
   }
 
-  void operator()(Object* obj, size_t usable_size ATTRIBUTE_UNUSED) const
-      SHARED_REQUIRES(Locks::mutator_lock_) {
+  void operator()(Object* obj, size_t usable_size) const
+      SHARED_LOCKS_REQUIRED(Locks::mutator_lock_) {
+    UNUSED(usable_size);
     // Avoid AsArray as object is not yet in live bitmap or allocation stack.
     Array* array = down_cast<Array*>(obj);
     // DCHECK(array->IsArrayInstance());
@@ -125,7 +126,7 @@ class SetLengthToUsableSizeVisitor {
   }
 
   void operator()(Object* obj, size_t usable_size) const
-      SHARED_REQUIRES(Locks::mutator_lock_) {
+      SHARED_LOCKS_REQUIRED(Locks::mutator_lock_) {
     // Avoid AsArray as object is not yet in live bitmap or allocation stack.
     Array* array = down_cast<Array*>(obj);
     // DCHECK(array->IsArrayInstance());
@@ -238,7 +239,7 @@ inline void PrimitiveArray<T>::Set(int32_t i, T value) {
 }
 
 template<typename T>
-template<bool kTransactionActive, bool kCheckTransaction, VerifyObjectFlags kVerifyFlags>
+template<bool kTransactionActive, bool kCheckTransaction>
 inline void PrimitiveArray<T>::SetWithoutChecks(int32_t i, T value) {
   if (kCheckTransaction) {
     DCHECK_EQ(kTransactionActive, Runtime::Current()->IsActiveTransaction());
@@ -246,7 +247,7 @@ inline void PrimitiveArray<T>::SetWithoutChecks(int32_t i, T value) {
   if (kTransactionActive) {
     Runtime::Current()->RecordWriteArray(this, i, GetWithoutChecks(i));
   }
-  DCHECK(CheckIsValidIndex<kVerifyFlags>(i));
+  DCHECK(CheckIsValidIndex(i));
   GetData()[i] = value;
 }
 // Backward copy where elements are of aligned appropriately for T. Count is in T sized units.
@@ -370,49 +371,27 @@ inline void PrimitiveArray<T>::Memcpy(int32_t dst_pos, PrimitiveArray<T>* src, i
   }
 }
 
-template<typename T, VerifyObjectFlags kVerifyFlags, ReadBarrierOption kReadBarrierOption>
+template<typename T>
 inline T PointerArray::GetElementPtrSize(uint32_t idx, size_t ptr_size) {
   // C style casts here since we sometimes have T be a pointer, or sometimes an integer
   // (for stack traces).
   if (ptr_size == 8) {
-    return (T)static_cast<uintptr_t>(
-        AsLongArray<kVerifyFlags, kReadBarrierOption>()->GetWithoutChecks(idx));
+    return (T)static_cast<uintptr_t>(AsLongArray()->GetWithoutChecks(idx));
   }
   DCHECK_EQ(ptr_size, 4u);
-  return (T)static_cast<uintptr_t>(
-      AsIntArray<kVerifyFlags, kReadBarrierOption>()->GetWithoutChecks(idx));
-}
-
-template<bool kTransactionActive, bool kUnchecked>
-inline void PointerArray::SetElementPtrSize(uint32_t idx, uint64_t element, size_t ptr_size) {
-  if (ptr_size == 8) {
-    (kUnchecked ? down_cast<LongArray*>(static_cast<Object*>(this)) : AsLongArray())->
-        SetWithoutChecks<kTransactionActive>(idx, element);
-  } else {
-    DCHECK_EQ(ptr_size, 4u);
-    DCHECK_LE(element, static_cast<uint64_t>(0xFFFFFFFFu));
-    (kUnchecked ? down_cast<IntArray*>(static_cast<Object*>(this)) : AsIntArray())
-        ->SetWithoutChecks<kTransactionActive>(idx, static_cast<uint32_t>(element));
-  }
+  return (T)static_cast<uintptr_t>(AsIntArray()->GetWithoutChecks(idx));
 }
 
 template<bool kTransactionActive, bool kUnchecked, typename T>
-inline void PointerArray::SetElementPtrSize(uint32_t idx, T* element, size_t ptr_size) {
-  SetElementPtrSize<kTransactionActive, kUnchecked>(idx,
-                                                    reinterpret_cast<uintptr_t>(element),
-                                                    ptr_size);
-}
-
-template <VerifyObjectFlags kVerifyFlags, ReadBarrierOption kReadBarrierOption, typename Visitor>
-inline void PointerArray::Fixup(mirror::PointerArray* dest,
-                                size_t pointer_size,
-                                const Visitor& visitor) {
-  for (size_t i = 0, count = GetLength(); i < count; ++i) {
-    void* ptr = GetElementPtrSize<void*, kVerifyFlags, kReadBarrierOption>(i, pointer_size);
-    void* new_ptr = visitor(ptr);
-    if (ptr != new_ptr) {
-      dest->SetElementPtrSize<false, true>(i, new_ptr, pointer_size);
-    }
+inline void PointerArray::SetElementPtrSize(uint32_t idx, T element, size_t ptr_size) {
+  if (ptr_size == 8) {
+    (kUnchecked ? down_cast<LongArray*>(static_cast<Object*>(this)) : AsLongArray())->
+        SetWithoutChecks<kTransactionActive>(idx, (uint64_t)(element));
+  } else {
+    DCHECK_EQ(ptr_size, 4u);
+    DCHECK_LE((uintptr_t)element, 0xFFFFFFFFu);
+    (kUnchecked ? down_cast<IntArray*>(static_cast<Object*>(this)) : AsIntArray())
+        ->SetWithoutChecks<kTransactionActive>(idx, static_cast<uint32_t>((uintptr_t)element));
   }
 }
 

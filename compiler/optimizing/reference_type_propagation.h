@@ -12,12 +12,14 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Modified by Intel Corporation
+ *
  */
 
 #ifndef ART_COMPILER_OPTIMIZING_REFERENCE_TYPE_PROPAGATION_H_
 #define ART_COMPILER_OPTIMIZING_REFERENCE_TYPE_PROPAGATION_H_
 
-#include "base/arena_containers.h"
 #include "driver/dex_compilation_unit.h"
 #include "handle_scope-inl.h"
 #include "nodes.h"
@@ -32,50 +34,32 @@ namespace art {
 class ReferenceTypePropagation : public HOptimization {
  public:
   ReferenceTypePropagation(HGraph* graph,
-                           Handle<mirror::DexCache> hint_dex_cache,
+                           const DexFile& dex_file,
+                           const DexCompilationUnit& dex_compilation_unit,
                            StackHandleScopeCollection* handles,
-                           bool is_first_run,
-                           const char* name = kReferenceTypePropagationPassName);
-
-  // Visit a single instruction.
-  void Visit(HInstruction* instruction);
+                           OptimizingCompilerStats* stats = nullptr)
+    : HOptimization(graph, true, kReferenceTypePropagationPassName, stats),
+      dex_file_(dex_file),
+      dex_compilation_unit_(dex_compilation_unit),
+      handles_(handles),
+      worklist_(graph->GetArena(), kDefaultWorklistSize) {}
 
   void Run() OVERRIDE;
 
   static constexpr const char* kReferenceTypePropagationPassName = "reference_type_propagation";
 
  private:
-  class HandleCache {
-   public:
-    explicit HandleCache(StackHandleScopeCollection* handles) : handles_(handles) { }
-
-    template <typename T>
-    MutableHandle<T> NewHandle(T* object) SHARED_REQUIRES(Locks::mutator_lock_) {
-      return handles_->NewHandle(object);
-    }
-
-    ReferenceTypeInfo::TypeHandle GetObjectClassHandle();
-    ReferenceTypeInfo::TypeHandle GetClassClassHandle();
-    ReferenceTypeInfo::TypeHandle GetStringClassHandle();
-    ReferenceTypeInfo::TypeHandle GetThrowableClassHandle();
-
-   private:
-    StackHandleScopeCollection* handles_;
-
-    ReferenceTypeInfo::TypeHandle object_class_handle_;
-    ReferenceTypeInfo::TypeHandle class_class_handle_;
-    ReferenceTypeInfo::TypeHandle string_class_handle_;
-    ReferenceTypeInfo::TypeHandle throwable_class_handle_;
-  };
-
-  class RTPVisitor;
-
+  void VisitNewInstance(HNewInstance* new_instance);
+  void VisitLoadClass(HLoadClass* load_class);
   void VisitPhi(HPhi* phi);
   void VisitBasicBlock(HBasicBlock* block);
-  void UpdateBoundType(HBoundType* bound_type) SHARED_REQUIRES(Locks::mutator_lock_);
-  void UpdatePhi(HPhi* phi) SHARED_REQUIRES(Locks::mutator_lock_);
+
+  void UpdateBoundType(HBoundType* bound_type) SHARED_LOCKS_REQUIRED(Locks::mutator_lock_);
+  void UpdatePhi(HPhi* phi) SHARED_LOCKS_REQUIRED(Locks::mutator_lock_);
+
   void BoundTypeForIfNotNull(HBasicBlock* block);
   void BoundTypeForIfInstanceOf(HBasicBlock* block);
+
   void ProcessWorklist();
   void AddToWorklist(HInstruction* instr);
   void AddDependentInstructionsToWorklist(HInstruction* instr);
@@ -83,28 +67,16 @@ class ReferenceTypePropagation : public HOptimization {
   bool UpdateNullability(HInstruction* instr);
   bool UpdateReferenceTypeInfo(HInstruction* instr);
 
-  static void UpdateArrayGet(HArrayGet* instr, HandleCache* handle_cache)
-      SHARED_REQUIRES(Locks::mutator_lock_);
-
   ReferenceTypeInfo MergeTypes(const ReferenceTypeInfo& a, const ReferenceTypeInfo& b)
-      SHARED_REQUIRES(Locks::mutator_lock_);
+      SHARED_LOCKS_REQUIRED(Locks::mutator_lock_);
 
-  void ValidateTypes();
+  const DexFile& dex_file_;
+  const DexCompilationUnit& dex_compilation_unit_;
+  StackHandleScopeCollection* handles_;
 
-  // Note: hint_dex_cache_ is usually, but not necessarily, the dex cache associated with
-  // graph_->GetDexFile(). Since we may look up also in other dex files, it's used only
-  // as a hint, to reduce the number of calls to the costly ClassLinker::FindDexCache().
-  Handle<mirror::DexCache> hint_dex_cache_;
-  HandleCache handle_cache_;
-
-  ArenaVector<HInstruction*> worklist_;
-
-  // Whether this reference type propagation is the first run we are doing.
-  const bool is_first_run_;
+  GrowableArray<HInstruction*> worklist_;
 
   static constexpr size_t kDefaultWorklistSize = 8;
-
-  friend class ReferenceTypePropagationTest;
 
   DISALLOW_COPY_AND_ASSIGN(ReferenceTypePropagation);
 };

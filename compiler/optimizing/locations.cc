@@ -17,27 +17,29 @@
 #include "locations.h"
 
 #include "nodes.h"
-#include "code_generator.h"
 
 namespace art {
 
 LocationSummary::LocationSummary(HInstruction* instruction,
                                  CallKind call_kind,
                                  bool intrinsified)
-    : inputs_(instruction->InputCount(),
-              instruction->GetBlock()->GetGraph()->GetArena()->Adapter(kArenaAllocLocationSummary)),
-      temps_(instruction->GetBlock()->GetGraph()->GetArena()->Adapter(kArenaAllocLocationSummary)),
+    : inputs_(instruction->GetBlock()->GetGraph()->GetArena(), instruction->InputCount()),
+      temps_(instruction->GetBlock()->GetGraph()->GetArena(), 0),
       output_overlaps_(Location::kOutputOverlap),
       call_kind_(call_kind),
       stack_mask_(nullptr),
       register_mask_(0),
       live_registers_(),
       intrinsified_(intrinsified) {
+  inputs_.SetSize(instruction->InputCount());
+  for (size_t i = 0; i < instruction->InputCount(); ++i) {
+    inputs_.Put(i, Location());
+  }
   instruction->SetLocations(this);
 
   if (NeedsSafepoint()) {
     ArenaAllocator* arena = instruction->GetBlock()->GetGraph()->GetArena();
-    stack_mask_ = ArenaBitVector::Create(arena, 0, true, kArenaAllocLocationSummary);
+    stack_mask_ = new (arena) ArenaBitVector(arena, 0, true);
   }
 }
 
@@ -48,26 +50,17 @@ Location Location::RegisterOrConstant(HInstruction* instruction) {
       : Location::RequiresRegister();
 }
 
-Location Location::RegisterOrInt32Constant(HInstruction* instruction) {
-  HConstant* constant = instruction->AsConstant();
-  if (constant != nullptr) {
-    int64_t value = CodeGenerator::GetInt64ValueOf(constant);
-    if (IsInt<32>(value)) {
-      return Location::ConstantLocation(constant);
-    }
+Location Location::RegisterOrInt32LongConstant(HInstruction* instruction) {
+  if (!instruction->IsConstant() || !instruction->AsConstant()->IsLongConstant()) {
+    return Location::RequiresRegister();
   }
-  return Location::RequiresRegister();
-}
 
-Location Location::FpuRegisterOrInt32Constant(HInstruction* instruction) {
-  HConstant* constant = instruction->AsConstant();
-  if (constant != nullptr) {
-    int64_t value = CodeGenerator::GetInt64ValueOf(constant);
-    if (IsInt<32>(value)) {
-      return Location::ConstantLocation(constant);
-    }
-  }
-  return Location::RequiresFpuRegister();
+  // Does the long constant fit in a 32 bit int?
+  int64_t value = instruction->AsConstant()->AsLongConstant()->GetValue();
+
+  return IsInt<32>(value)
+      ? Location::ConstantLocation(instruction->AsConstant())
+      : Location::RequiresRegister();
 }
 
 Location Location::ByteRegisterOrConstant(int reg, HInstruction* instruction) {

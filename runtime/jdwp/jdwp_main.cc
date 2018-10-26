@@ -126,12 +126,9 @@ void JdwpNetStateBase::Close() {
  * Write a packet of "length" bytes. Grabs a mutex to assure atomicity.
  */
 ssize_t JdwpNetStateBase::WritePacket(ExpandBuf* pReply, size_t length) {
-  DCHECK_LE(length, expandBufGetLength(pReply));
-  if (!IsConnected()) {
-    LOG(WARNING) << "Connection with debugger is closed";
-    return -1;
-  }
   MutexLock mu(Thread::Current(), socket_lock_);
+  DCHECK(IsConnected()) << "Connection with debugger is closed";
+  DCHECK_LE(length, expandBufGetLength(pReply));
   return TEMP_FAILURE_RETRY(write(clientSock, expandBufGetBuffer(pReply), length));
 }
 
@@ -251,7 +248,7 @@ JdwpState* JdwpState::Create(const JdwpOptions* options) {
     case kJdwpTransportSocket:
       InitSocketTransport(state.get(), options);
       break;
-#ifdef __ANDROID__
+#ifdef HAVE_ANDROID_OS
     case kJdwpTransportAndroidAdb:
       InitAdbTransport(state.get(), options);
       break;
@@ -259,12 +256,12 @@ JdwpState* JdwpState::Create(const JdwpOptions* options) {
     default:
       LOG(FATAL) << "Unknown transport: " << options->transport;
   }
+
   {
     /*
      * Grab a mutex before starting the thread.  This ensures they
      * won't signal the cond var before we're waiting.
      */
-    state->thread_start_lock_.AssertNotHeld(self);
     MutexLock thread_start_locker(self, state->thread_start_lock_);
 
     /*
@@ -536,8 +533,9 @@ void JdwpState::Run() {
       ddm_is_active_ = false;
 
       /* broadcast the disconnect; must be in RUNNING state */
-      ScopedObjectAccess soa(thread_);
+      thread_->TransitionFromSuspendedToRunnable();
       Dbg::DdmDisconnected();
+      thread_->TransitionFromRunnableToSuspended(kWaitingInMainDebuggerLoop);
     }
 
     {

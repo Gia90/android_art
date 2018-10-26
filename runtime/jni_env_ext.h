@@ -12,6 +12,9 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Modified by Intel Corporation
+ *
  */
 
 #ifndef ART_RUNTIME_JNI_ENV_EXT_H_
@@ -39,26 +42,49 @@ struct JNIEnvExt : public JNIEnv {
   ~JNIEnvExt();
 
   void DumpReferenceTables(std::ostream& os)
-      SHARED_REQUIRES(Locks::mutator_lock_);
+      SHARED_LOCKS_REQUIRED(Locks::mutator_lock_);
 
   void SetCheckJniEnabled(bool enabled);
 
-  void PushFrame(int capacity) SHARED_REQUIRES(Locks::mutator_lock_);
-  void PopFrame() SHARED_REQUIRES(Locks::mutator_lock_);
+  void PushFrame(int capacity);
+  void PopFrame();
 
   template<typename T>
   T AddLocalReference(mirror::Object* obj)
-      SHARED_REQUIRES(Locks::mutator_lock_);
+      SHARED_LOCKS_REQUIRED(Locks::mutator_lock_);
 
-  static Offset SegmentStateOffset(size_t pointer_size);
-  static Offset LocalRefCookieOffset(size_t pointer_size);
-  static Offset SelfOffset(size_t pointer_size);
+  static Offset SegmentStateOffset();
 
-  jobject NewLocalRef(mirror::Object* obj) SHARED_REQUIRES(Locks::mutator_lock_);
-  void DeleteLocalRef(jobject obj) SHARED_REQUIRES(Locks::mutator_lock_);
+  static Offset SegmentStateOffset(size_t pointer_size) {
+    return Offset(LocalRefCookieOffset(pointer_size).SizeValue()
+                  + sizeof(local_ref_cookie)
+                  + IndirectReferenceTable::SegmentStateOffset().SizeValue());
+  }
+
+  static Offset LocalRefCookieOffset() {
+    return Offset(OFFSETOF_MEMBER(JNIEnvExt, local_ref_cookie));
+  }
+
+  static Offset LocalRefCookieOffset(size_t pointer_size) {
+    return Offset(pointer_size * kLeadingPointerCount + sizeof(critical));
+  }
+
+  static Offset SelfOffset() {
+    return Offset(OFFSETOF_MEMBER(JNIEnvExt, self));
+  }
+
+  jobject NewLocalRef(mirror::Object* obj) SHARED_LOCKS_REQUIRED(Locks::mutator_lock_);
+  void DeleteLocalRef(jobject obj) SHARED_LOCKS_REQUIRED(Locks::mutator_lock_);
 
   Thread* const self;
   JavaVMExt* const vm;
+
+  // Pointer count, used to compute member offset of 'local_ref_cookie' and 'locals'.
+  static const size_t kLeadingPointerCount = 3;
+
+  // Move 'critical' here to make 'locals' pointer size aligned without padding.
+  // How many nested "critical" JNI calls are we in?
+  int32_t critical;
 
   // Cookie used when using the local indirect reference table.
   uint32_t local_ref_cookie;
@@ -74,42 +100,16 @@ struct JNIEnvExt : public JNIEnv {
   // Frequently-accessed fields cached from JavaVM.
   bool check_jni;
 
-  // If we are a JNI env for a daemon thread with a deleted runtime.
-  bool runtime_deleted;
-
-  // How many nested "critical" JNI calls are we in?
-  int critical;
-
   // Entered JNI monitors, for bulk exit on thread detach.
   ReferenceTable monitors;
 
   // Used by -Xcheck:jni.
   const JNINativeInterface* unchecked_functions;
 
-  // Functions to keep track of monitor lock and unlock operations. Used to ensure proper locking
-  // rules in CheckJNI mode.
-
-  // Record locking of a monitor.
-  void RecordMonitorEnter(jobject obj) SHARED_REQUIRES(Locks::mutator_lock_);
-
-  // Check the release, that is, that the release is performed in the same JNI "segment."
-  void CheckMonitorRelease(jobject obj) SHARED_REQUIRES(Locks::mutator_lock_);
-
-  // Check that no monitors are held that have been acquired in this JNI "segment."
-  void CheckNoHeldMonitors() SHARED_REQUIRES(Locks::mutator_lock_);
-
-  // Set the functions to the runtime shutdown functions.
-  void SetFunctionsToRuntimeShutdownFunctions();
-
  private:
   // The constructor should not be called directly. It may leave the object in an erronuous state,
   // and the result needs to be checked.
   JNIEnvExt(Thread* self, JavaVMExt* vm);
-
-  // All locked objects, with the (Java caller) stack frame that locked them. Used in CheckJNI
-  // to ensure that only monitors locked in this native frame are being unlocked, and that at
-  // the end all are unlocked.
-  std::vector<std::pair<uintptr_t, jobject>> locked_objects_;
 };
 
 // Used to save and restore the JNIEnvExt state when not going through code created by the JNI

@@ -12,6 +12,9 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Modified by Intel Corporation
+ *
  */
 
 #include "art_method-inl.h"
@@ -27,6 +30,21 @@ extern void ReadBarrierJni(mirror::CompressedReference<mirror::Object>* handle_o
   // Call the read barrier and update the handle.
   mirror::Object* to_ref = ReadBarrier::BarrierForRoot(handle_on_stack);
   handle_on_stack->Assign(to_ref);
+}
+
+// Called on entry to JNI from native bridge,
+// transition out of Runnable and release share of mutator_lock_.
+extern void JniMethodStartFromCode(Thread* self) {
+  self->TransitionFromRunnableToSuspended(kNative);
+}
+
+extern void JniMethodStartSynchronizedFromCode(jobject to_lock, Thread* self) {
+  self->DecodeJObject(to_lock)->MonitorEnter(self);
+  ArtMethod* native_method = *self->GetManagedStack()->GetTopQuickFrame();
+  if (!native_method->IsFastNative()) {
+    // When not fast JNI we transition out of runnable.
+    self->TransitionFromRunnableToSuspended(kNative);
+  }
 }
 
 // Called on entry to JNI, transition out of Runnable and release share of mutator_lock_.
@@ -63,11 +81,8 @@ static void GoToRunnable(Thread* self) NO_THREAD_SAFETY_ANALYSIS {
 }
 
 static void PopLocalReferences(uint32_t saved_local_ref_cookie, Thread* self)
-    SHARED_REQUIRES(Locks::mutator_lock_) {
+    SHARED_LOCKS_REQUIRED(Locks::mutator_lock_) {
   JNIEnvExt* env = self->GetJniEnv();
-  if (UNLIKELY(env->check_jni)) {
-    env->CheckNoHeldMonitors();
-  }
   env->locals.SetSegmentState(env->local_ref_cookie);
   env->local_ref_cookie = saved_local_ref_cookie;
   self->PopHandleScope();
@@ -113,63 +128,6 @@ extern mirror::Object* JniMethodEndWithReferenceSynchronized(jobject result,
   GoToRunnable(self);
   UnlockJniSynchronizedMethod(locked, self);
   return JniMethodEndWithReferenceHandleResult(result, saved_local_ref_cookie, self);
-}
-
-extern uint64_t GenericJniMethodEnd(Thread* self,
-                                    uint32_t saved_local_ref_cookie,
-                                    jvalue result,
-                                    uint64_t result_f,
-                                    ArtMethod* called,
-                                    HandleScope* handle_scope)
-    // TODO: NO_THREAD_SAFETY_ANALYSIS as GoToRunnable() is NO_THREAD_SAFETY_ANALYSIS
-    NO_THREAD_SAFETY_ANALYSIS {
-  GoToRunnable(self);
-  // We need the mutator lock (i.e., calling GoToRunnable()) before accessing the shorty or the
-  // locked object.
-  jobject locked = called->IsSynchronized() ? handle_scope->GetHandle(0).ToJObject() : nullptr;
-  char return_shorty_char = called->GetShorty()[0];
-  if (return_shorty_char == 'L') {
-    if (locked != nullptr) {
-      UnlockJniSynchronizedMethod(locked, self);
-    }
-    return reinterpret_cast<uint64_t>(JniMethodEndWithReferenceHandleResult(
-        result.l, saved_local_ref_cookie, self));
-  } else {
-    if (locked != nullptr) {
-      UnlockJniSynchronizedMethod(locked, self);  // Must decode before pop.
-    }
-    PopLocalReferences(saved_local_ref_cookie, self);
-    switch (return_shorty_char) {
-      case 'F': {
-        if (kRuntimeISA == kX86) {
-          // Convert back the result to float.
-          double d = bit_cast<double, uint64_t>(result_f);
-          return bit_cast<uint32_t, float>(static_cast<float>(d));
-        } else {
-          return result_f;
-        }
-      }
-      case 'D':
-        return result_f;
-      case 'Z':
-        return result.z;
-      case 'B':
-        return result.b;
-      case 'C':
-        return result.c;
-      case 'S':
-        return result.s;
-      case 'I':
-        return result.i;
-      case 'J':
-        return result.j;
-      case 'V':
-        return 0;
-      default:
-        LOG(FATAL) << "Unexpected return shorty character " << return_shorty_char;
-        return 0;
-    }
-  }
 }
 
 }  // namespace art

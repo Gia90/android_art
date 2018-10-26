@@ -40,24 +40,22 @@ public class Main {
     /**
      * Set up {@link #UNSAFE}.
      */
-    public static void setUp() throws Exception{
+    public static void setUp() {
         /*
          * Subvert the access check to get the unique Unsafe instance.
          * We can do this because there's no security manager
          * installed when running the test.
          */
-        Field field = null;
         try {
-            field = Unsafe.class.getDeclaredField("THE_ONE");
-        } catch (NoSuchFieldException e1) {
-            try {
-                field = Unsafe.class.getDeclaredField("theUnsafe");
-            } catch (NoSuchFieldException e2) {
-                throw new RuntimeException("Failed to find THE_ONE or theUnsafe");
-            }
+            Field field = Unsafe.class.getDeclaredField("THE_ONE");
+            field.setAccessible(true);
+
+            UNSAFE = (Unsafe) field.get(null);
+        } catch (NoSuchFieldException ex) {
+            throw new RuntimeException(ex);
+        } catch (IllegalAccessException ex) {
+            throw new RuntimeException(ex);
         }
-        field.setAccessible(true);
-        UNSAFE = (Unsafe) field.get(null);
     }
 
     /**

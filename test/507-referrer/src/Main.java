@@ -18,7 +18,7 @@ import p1.InPackage;
 
 public class Main {
   public static void main(String[] args) {
-    int result = InPackage.$inline$foo();
+    int result = InPackage.foo();
     if (result != 42) {
       throw new Error("Expected 42, got " + result);
     }

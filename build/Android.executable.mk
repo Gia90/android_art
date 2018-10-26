@@ -13,8 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+# Modified by Intel Corporation
+#
+#
 
-include art/build/Android.common_build.mk
+include $(VENDOR_ART_PATH)/build/Android.common_build.mk
 
 ART_HOST_EXECUTABLES ?=
 ART_TARGET_EXECUTABLES ?=
@@ -28,7 +31,6 @@ ART_EXECUTABLES_CFLAGS :=
 # $(5): target or host
 # $(6): ndebug or debug
 # $(7): value for LOCAL_MULTILIB (empty means default)
-# $(8): static or shared (empty means shared, applies only for host)
 define build-art-executable
   ifneq ($(5),target)
     ifneq ($(5),host)
@@ -43,34 +45,27 @@ define build-art-executable
 
   art_executable := $(1)
   art_source := $(2)
-  art_libraries := $(3)
+  art_shared_libraries := $(3)
   art_c_includes := $(4)
   art_target_or_host := $(5)
   art_ndebug_or_debug := $(6)
   art_multilib := $(7)
-  art_static_or_shared := $(8)
+  art_static_libraries := $(8)
   art_out_binary_name :=
 
   include $(CLEAR_VARS)
   LOCAL_CPP_EXTENSION := $(ART_CPP_EXTENSION)
   LOCAL_MODULE_TAGS := optional
   LOCAL_SRC_FILES := $$(art_source)
-  LOCAL_C_INCLUDES += $(ART_C_INCLUDES) art/runtime art/cmdline $$(art_c_includes)
-
-  ifeq ($$(art_static_or_shared),static)
-    LOCAL_STATIC_LIBRARIES += $$(art_libraries)
-  else
-    LOCAL_SHARED_LIBRARIES += $$(art_libraries)
-  endif
+  LOCAL_C_INCLUDES += $(ART_C_INCLUDES) $(VENDOR_ART_PATH)/runtime $(VENDOR_ART_PATH)/cmdline $$(art_c_includes)
+  LOCAL_SHARED_LIBRARIES += $$(art_shared_libraries)
+  LOCAL_STATIC_LIBRARIES += $$(art_static_libraries)
+  LOCAL_WHOLE_STATIC_LIBRARIES += libsigchain
 
   ifeq ($$(art_ndebug_or_debug),ndebug)
     LOCAL_MODULE := $$(art_executable)
   else #debug
     LOCAL_MODULE := $$(art_executable)d
-  endif
-
-  ifeq ($$(art_static_or_shared),static)
-    LOCAL_MODULE := $(LOCAL_MODULE)s
   endif
 
   LOCAL_CFLAGS := $(ART_EXECUTABLES_CFLAGS)
@@ -80,58 +75,33 @@ define build-art-executable
   endif
 
   ifeq ($$(art_target_or_host),target)
-    $(call set-target-local-clang-vars)
-    $(call set-target-local-cflags-vars,$(6))
+  	$(call set-target-local-clang-vars)
+  	$(call set-target-local-cflags-vars,$(6))
     LOCAL_SHARED_LIBRARIES += libdl
   else # host
     LOCAL_CLANG := $(ART_HOST_CLANG)
     LOCAL_LDLIBS := $(ART_HOST_LDLIBS)
     LOCAL_CFLAGS += $(ART_HOST_CFLAGS)
-    LOCAL_ASFLAGS += $(ART_HOST_ASFLAGS)
     ifeq ($$(art_ndebug_or_debug),debug)
       LOCAL_CFLAGS += $(ART_HOST_DEBUG_CFLAGS)
     else
       LOCAL_CFLAGS += $(ART_HOST_NON_DEBUG_CFLAGS)
     endif
     LOCAL_LDLIBS += -lpthread -ldl
-    ifeq ($$(art_static_or_shared),static)
-      LOCAL_LDFLAGS += -static
-      # We need this because GC stress mode makes use of _Unwind_GetIP and _Unwind_Backtrace and
-      # the symbols are also defined in libgcc_eh.a(unwind-dw2.o)
-      # TODO: Having this is not ideal as it might obscure errors. Try to get rid of it.
-      LOCAL_LDFLAGS += -z muldefs
-      ifeq ($$(HOST_OS),linux)
-        LOCAL_LDLIBS += -lrt -lncurses -ltinfo
-      endif
-      ifeq ($$(HOST_OS),darwin)
-        LOCAL_LDLIBS += -lncurses -ltinfo
-      endif
-    endif
-
   endif
 
-  # If dynamically linked add libart by default. Statically linked executables
-  # needs to specify it in art_libraries to ensure proper ordering.
   ifeq ($$(art_ndebug_or_debug),ndebug)
-    ifneq ($$(art_static_or_shared),static)
-      LOCAL_SHARED_LIBRARIES += libart
-    endif
+    LOCAL_SHARED_LIBRARIES += libart
   else # debug
-    ifneq ($$(art_static_or_shared),static)
-      LOCAL_SHARED_LIBRARIES += libartd
-    endif
+    LOCAL_SHARED_LIBRARIES += libartd
   endif
 
-  LOCAL_ADDITIONAL_DEPENDENCIES := art/build/Android.common_build.mk
-  LOCAL_ADDITIONAL_DEPENDENCIES += art/build/Android.common_utils.mk
-  LOCAL_ADDITIONAL_DEPENDENCIES += art/build/Android.executable.mk
+  LOCAL_ADDITIONAL_DEPENDENCIES := $(VENDOR_ART_PATH)/build/Android.common_build.mk
+  LOCAL_ADDITIONAL_DEPENDENCIES += $(VENDOR_ART_PATH)/build/Android.common_utils.mk
+  LOCAL_ADDITIONAL_DEPENDENCIES += $(VENDOR_ART_PATH)/build/Android.executable.mk
 
   ifeq ($$(art_target_or_host),target)
     LOCAL_MODULE_TARGET_ARCH := $(ART_SUPPORTED_ARCH)
-  endif
-
-  ifdef ART_MULTILIB_OVERRIDE_$$(art_target_or_host)
-    art_multilib := $$(ART_MULTILIB_OVERRIDE_$$(art_target_or_host))
   endif
 
   LOCAL_MULTILIB := $$(art_multilib)
@@ -178,12 +148,11 @@ define build-art-executable
   # Clear out local variables now that we're done with them.
   art_executable :=
   art_source :=
-  art_libraries :=
+  art_shared_libraries :=
   art_c_includes :=
   art_target_or_host :=
   art_ndebug_or_debug :=
   art_multilib :=
-  art_static_or_shared :=
   art_out_binary_name :=
 
 endef
@@ -201,9 +170,6 @@ endef
 # $(5): library dependencies (host only)
 # $(6): extra include directories
 # $(7): multilib (default: empty), valid values: {,32,64,both})
-# $(8): host prefer 32-bit: {true, false} (default: false).  If argument
-#       `multilib` is explicitly set to 64, ignore the "host prefer 32-bit"
-#       setting and only build a 64-bit executable on host.
 define build-art-multi-executable
   $(foreach debug_flavor,ndebug debug,
     $(foreach target_flavor,host target,
@@ -214,7 +180,6 @@ define build-art-multi-executable
       art-multi-lib-dependencies-host := $(5)
       art-multi-include-extra := $(6)
       art-multi-multilib := $(7)
-      art-multi-host-prefer-32-bit := $(8)
 
       # Add either -host or -target specific lib dependencies to the lib dependencies.
       art-multi-lib-dependencies += $$(art-multi-lib-dependencies-$(target_flavor))
@@ -226,14 +191,6 @@ define build-art-multi-executable
 
       # Build the env guard var name, e.g. ART_BUILD_HOST_NDEBUG.
       art-multi-env-guard := $$(call art-string-to-uppercase,ART_BUILD_$(target_flavor)_$(debug_flavor))
-
-      ifeq ($(target_flavor),host)
-        ifeq ($$(art-multi-host-prefer-32-bit),true)
-          ifneq ($$(art-multi-multilib),64)
-            art-multi-multilib := 32
-          endif
-        endif
-      endif
 
       # Build the art executable only if the corresponding env guard was set.
       ifeq ($$($$(art-multi-env-guard)),true)
@@ -248,7 +205,6 @@ define build-art-multi-executable
       art-multi-lib-dependencies-host :=
       art-multi-include-extra :=
       art-multi-multilib :=
-      art-multi-host-prefer-32-bit :=
       art-multi-env-guard :=
     )
   )

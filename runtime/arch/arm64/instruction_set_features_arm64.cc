@@ -25,21 +25,12 @@
 namespace art {
 
 const Arm64InstructionSetFeatures* Arm64InstructionSetFeatures::FromVariant(
-    const std::string& variant, std::string* error_msg ATTRIBUTE_UNUSED) {
+    const std::string& variant, std::string* error_msg) {
   const bool smp = true;  // Conservative default.
 
   // Look for variants that need a fix for a53 erratum 835769.
   static const char* arm64_variants_with_a53_835769_bug[] = {
-      // Pessimistically assume all generic CPUs are cortex-a53.
-      "default",
-      "generic",
-      "cortex-a53",
-      "cortex-a53.a57",
-      "cortex-a53.a72",
-      // Pessimistically assume all "big" cortex CPUs are paired with a cortex-a53.
-      "cortex-a57",
-      "cortex-a72",
-      "cortex-a73",
+      "default", "generic", "cortex-a53"  // Pessimistically assume all generic ARM64s are A53s.
   };
   bool needs_a53_835769_fix = FindVariantInArray(arm64_variants_with_a53_835769_bug,
                                                  arraysize(arm64_variants_with_a53_835769_bug),
@@ -48,14 +39,13 @@ const Arm64InstructionSetFeatures* Arm64InstructionSetFeatures::FromVariant(
   if (!needs_a53_835769_fix) {
     // Check to see if this is an expected variant.
     static const char* arm64_known_variants[] = {
-        "cortex-a35",
-        "exynos-m1",
-        "exynos-m2",
-        "denver64",
-        "kryo"
+        "denver64"
     };
     if (!FindVariantInArray(arm64_known_variants, arraysize(arm64_known_variants), variant)) {
-      LOG(WARNING) << "Unexpected CPU variant for Arm64: " << variant;
+      std::ostringstream os;
+      os << "Unexpected CPU variant for Arm64: " << variant;
+      *error_msg = os.str();
+      return nullptr;
     }
   }
 
@@ -151,7 +141,7 @@ const InstructionSetFeatures* Arm64InstructionSetFeatures::AddFeaturesFromSplitS
       is_a53 = false;
     } else {
       *error_msg = StringPrintf("Unknown instruction set feature: '%s'", feature.c_str());
-      LOG(WARNING) << *error_msg;
+      return nullptr;
     }
   }
   return new Arm64InstructionSetFeatures(smp, is_a53, is_a53);

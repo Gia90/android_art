@@ -86,10 +86,8 @@ def ProcessFile(filename):
       if m:
         enclosing_classes.append(m.group(1))
         continue
-
-      # End of class/struct -- be careful not to match "do { ... } while" constructs by accident
-      m = re.compile(r'^\s*\}(\s+)?(while)?(.+)?;').search(raw_line)
-      if m and not m.group(2):
+      m = re.compile(r'^\s*\}( .*)?;').search(raw_line)
+      if m:
         enclosing_classes = enclosing_classes[0:len(enclosing_classes) - 1]
         continue
 

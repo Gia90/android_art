@@ -12,21 +12,21 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Modified by Intel Corporation
+ *
  */
 
 #ifndef ART_COMPILER_UTILS_X86_ASSEMBLER_X86_H_
 #define ART_COMPILER_UTILS_X86_ASSEMBLER_X86_H_
 
 #include <vector>
-
-#include "base/arena_containers.h"
 #include "base/bit_utils.h"
 #include "base/macros.h"
 #include "constants_x86.h"
 #include "globals.h"
 #include "managed_register_x86.h"
 #include "offsets.h"
-#include "utils/array_ref.h"
 #include "utils/assembler.h"
 
 namespace art {
@@ -127,9 +127,6 @@ class Operand : public ValueObject {
  private:
   uint8_t length_;
   uint8_t encoding_[6];
-
-  // A fixup can be associated with the operand, in order to be applied after the
-  // code has been generated. This is used for constant area fixups.
   AssemblerFixup* fixup_;
 
   explicit Operand(Register reg) : fixup_(nullptr) { SetModRM(3, reg); }
@@ -151,7 +148,7 @@ class Address : public Operand {
     Init(base_in, disp);
   }
 
-  Address(Register base_in, int32_t disp, AssemblerFixup *fixup) {
+  Address(Register base_in, int32_t disp, AssemblerFixup* fixup) {
     Init(base_in, disp);
     SetFixup(fixup);
   }
@@ -169,39 +166,6 @@ class Address : public Operand {
     Init(base_in, disp.Int32Value());
   }
 
-  Address(Register index_in, ScaleFactor scale_in, int32_t disp) {
-    CHECK_NE(index_in, ESP);  // Illegal addressing mode.
-    SetModRM(0, ESP);
-    SetSIB(scale_in, index_in, EBP);
-    SetDisp32(disp);
-  }
-
-  Address(Register base_in, Register index_in, ScaleFactor scale_in, int32_t disp) {
-    Init(base_in, index_in, scale_in, disp);
-  }
-
-  Address(Register base_in,
-          Register index_in,
-          ScaleFactor scale_in,
-          int32_t disp, AssemblerFixup *fixup) {
-    Init(base_in, index_in, scale_in, disp);
-    SetFixup(fixup);
-  }
-
-  static Address Absolute(uintptr_t addr) {
-    Address result;
-    result.SetModRM(0, EBP);
-    result.SetDisp32(addr);
-    return result;
-  }
-
-  static Address Absolute(ThreadOffset<4> addr) {
-    return Absolute(addr.Int32Value());
-  }
-
- private:
-  Address() {}
-
   void Init(Register base_in, int32_t disp) {
     if (disp == 0 && base_in != EBP) {
       SetModRM(0, base_in);
@@ -217,7 +181,14 @@ class Address : public Operand {
     }
   }
 
-  void Init(Register base_in, Register index_in, ScaleFactor scale_in, int32_t disp) {
+  Address(Register index_in, ScaleFactor scale_in, int32_t disp) {
+    CHECK_NE(index_in, ESP);  // Illegal addressing mode.
+    SetModRM(0, ESP);
+    SetSIB(scale_in, index_in, EBP);
+    SetDisp32(disp);
+  }
+
+  Address(Register base_in, Register index_in, ScaleFactor scale_in, int32_t disp) {
     CHECK_NE(index_in, ESP);  // Illegal addressing mode.
     if (disp == 0 && base_in != EBP) {
       SetModRM(0, ESP);
@@ -232,6 +203,85 @@ class Address : public Operand {
       SetDisp32(disp);
     }
   }
+
+  static Address Absolute(uintptr_t addr) {
+    Address result;
+    result.SetModRM(0, EBP);
+    result.SetDisp32(addr);
+    return result;
+  }
+
+  static Address Absolute(ThreadOffset<4> addr) {
+    return Absolute(addr.Int32Value());
+  }
+
+ private:
+  Address() {}
+};
+
+
+/**
+ * Class to handle constant area values.
+ */
+class ConstantArea {
+  public:
+    ConstantArea() : num_zero_words_(0) {}
+
+    // Add a double to the constant area, returning the offset into
+    // the constant area where the literal resides.
+    int AddDouble(double v);
+
+    // Add a float to the constant area, returning the offset into
+    // the constant area where the literal resides.
+    int AddFloat(float v);
+
+    // Add an int32_t to the constant area, returning the offset into
+    // the constant area where the literal resides.
+    int AddInt32(int32_t v);
+
+    // Add an int64_t to the constant area, returning the offset into
+    // the constant area where the literal resides.
+    int AddInt64(int64_t v);
+
+    int GetSize() const {
+      return buffer_.size() * elem_size_ + num_zero_words_ * sizeof(int32_t);
+    }
+
+    int GetInitializedSize() const {
+      return buffer_.size() * elem_size_;
+    }
+
+    const std::vector<int32_t>& GetBuffer(size_t* zero_word_start) const {
+      DCHECK(zero_word_start != nullptr);
+      *zero_word_start = num_zero_words_;
+      return buffer_;
+    }
+
+    typedef std::pair<size_t, AssemblerFixup*> FixupInfo;
+
+    void AddFixup(AssemblerFixup* fixup) {
+      fixups_.push_back(FixupInfo(num_zero_words_, fixup));
+    }
+
+    const std::vector<FixupInfo>& GetFixups() const {
+      return fixups_;
+    }
+
+    int AddZeroWords(int num_words) {
+      int orig_count = num_zero_words_;
+      num_zero_words_ += num_words;
+      return orig_count * sizeof(int32_t);
+    }
+
+  private:
+    static constexpr size_t elem_size_ = sizeof(int32_t);
+    std::vector<int32_t> buffer_;
+
+    // num_zero_words_ holds the count of zero words that are allocated in
+    // the constant area.  They are expected to be patched by a Fixup at a
+    // later time.  One possible use is for switch jump tables.
+    int num_zero_words_;
+    std::vector<FixupInfo> fixups_;
 };
 
 
@@ -258,53 +308,10 @@ class NearLabel : private Label {
   DISALLOW_COPY_AND_ASSIGN(NearLabel);
 };
 
-/**
- * Class to handle constant area values.
- */
-class ConstantArea {
- public:
-  explicit ConstantArea(ArenaAllocator* arena) : buffer_(arena->Adapter(kArenaAllocAssembler)) {}
-
-  // Add a double to the constant area, returning the offset into
-  // the constant area where the literal resides.
-  size_t AddDouble(double v);
-
-  // Add a float to the constant area, returning the offset into
-  // the constant area where the literal resides.
-  size_t AddFloat(float v);
-
-  // Add an int32_t to the constant area, returning the offset into
-  // the constant area where the literal resides.
-  size_t AddInt32(int32_t v);
-
-  // Add an int32_t to the end of the constant area, returning the offset into
-  // the constant area where the literal resides.
-  size_t AppendInt32(int32_t v);
-
-  // Add an int64_t to the constant area, returning the offset into
-  // the constant area where the literal resides.
-  size_t AddInt64(int64_t v);
-
-  bool IsEmpty() const {
-    return buffer_.size() == 0;
-  }
-
-  size_t GetSize() const {
-    return buffer_.size() * elem_size_;
-  }
-
-  ArrayRef<const int32_t> GetBuffer() const {
-    return ArrayRef<const int32_t>(buffer_);
-  }
-
- private:
-  static constexpr size_t elem_size_ = sizeof(int32_t);
-  ArenaVector<int32_t> buffer_;
-};
 
 class X86Assembler FINAL : public Assembler {
  public:
-  explicit X86Assembler(ArenaAllocator* arena) : Assembler(arena), constant_area_(arena) {}
+  explicit X86Assembler() {}
   virtual ~X86Assembler() {}
 
   /*
@@ -334,19 +341,6 @@ class X86Assembler FINAL : public Assembler {
 
   void bswapl(Register dst);
 
-  void bsfl(Register dst, Register src);
-  void bsfl(Register dst, const Address& src);
-  void bsrl(Register dst, Register src);
-  void bsrl(Register dst, const Address& src);
-
-  void popcntl(Register dst, Register src);
-  void popcntl(Register dst, const Address& src);
-
-  void rorl(Register reg, const Immediate& imm);
-  void rorl(Register operand, Register shifter);
-  void roll(Register reg, const Immediate& imm);
-  void roll(Register operand, Register shifter);
-
   void movzxb(Register dst, ByteRegister src);
   void movzxb(Register dst, const Address& src);
   void movsxb(Register dst, ByteRegister src);
@@ -366,7 +360,6 @@ class X86Assembler FINAL : public Assembler {
   void leal(Register dst, const Address& src);
 
   void cmovl(Condition condition, Register dst, Register src);
-  void cmovl(Condition condition, Register dst, const Address& src);
 
   void setb(Condition condition, Register dst);
 
@@ -514,11 +507,14 @@ class X86Assembler FINAL : public Assembler {
   void adcl(Register dst, Register src);
   void adcl(Register reg, const Immediate& imm);
   void adcl(Register dst, const Address& address);
+  void adcl(const Address& address, Register reg);
+  void adcl(const Address& address, const Immediate& imm);
 
   void subl(Register dst, Register src);
   void subl(Register reg, const Immediate& imm);
   void subl(Register reg, const Address& address);
   void subl(const Address& address, Register src);
+  void subl(const Address& address, const Immediate& imm);
 
   void cdq();
 
@@ -539,6 +535,7 @@ class X86Assembler FINAL : public Assembler {
   void sbbl(Register reg, const Immediate& imm);
   void sbbl(Register reg, const Address& address);
   void sbbl(const Address& address, Register src);
+  void sbbl(const Address& address, const Immediate& imm);
 
   void incl(Register reg);
   void incl(const Address& address);
@@ -586,8 +583,6 @@ class X86Assembler FINAL : public Assembler {
   void jmp(NearLabel* label);
 
   void repne_scasw();
-  void repe_cmpsw();
-  void repe_cmpsl();
   void rep_movsw();
 
   X86Assembler* lock();
@@ -621,10 +616,7 @@ class X86Assembler FINAL : public Assembler {
   //
   int PreferredLoopAlignment() { return 16; }
   void Align(int alignment, int offset);
-  void Bind(Label* label) OVERRIDE;
-  void Jump(Label* label) OVERRIDE {
-    jmp(label);
-  }
+  void Bind(Label* label);
   void Bind(NearLabel* label);
 
   //
@@ -669,7 +661,7 @@ class X86Assembler FINAL : public Assembler {
   void LoadRef(ManagedRegister dest, FrameOffset src) OVERRIDE;
 
   void LoadRef(ManagedRegister dest, ManagedRegister base, MemberOffset offs,
-               bool unpoison_reference) OVERRIDE;
+               bool poison_reference) OVERRIDE;
 
   void LoadRawPtr(ManagedRegister dest, ManagedRegister base, Offset offs) OVERRIDE;
 
@@ -744,53 +736,32 @@ class X86Assembler FINAL : public Assembler {
   // and branch to a ExceptionSlowPath if it is.
   void ExceptionPoll(ManagedRegister scratch, size_t stack_adjust) OVERRIDE;
 
-  //
-  // Heap poisoning.
-  //
-
-  // Poison a heap reference contained in `reg`.
-  void PoisonHeapReference(Register reg) { negl(reg); }
-  // Unpoison a heap reference contained in `reg`.
-  void UnpoisonHeapReference(Register reg) { negl(reg); }
-  // Unpoison a heap reference contained in `reg` if heap poisoning is enabled.
-  void MaybeUnpoisonHeapReference(Register reg) {
-    if (kPoisonHeapReferences) {
-      UnpoisonHeapReference(reg);
-    }
-  }
-
   // Add a double to the constant area, returning the offset into
   // the constant area where the literal resides.
-  size_t AddDouble(double v) { return constant_area_.AddDouble(v); }
+  int AddDouble(double v) { return constant_area_.AddDouble(v); }
 
   // Add a float to the constant area, returning the offset into
   // the constant area where the literal resides.
-  size_t AddFloat(float v)   { return constant_area_.AddFloat(v); }
+  int AddFloat(float v)   { return constant_area_.AddFloat(v); }
 
   // Add an int32_t to the constant area, returning the offset into
   // the constant area where the literal resides.
-  size_t AddInt32(int32_t v) {
-    return constant_area_.AddInt32(v);
-  }
-
-  // Add an int32_t to the end of the constant area, returning the offset into
-  // the constant area where the literal resides.
-  size_t AppendInt32(int32_t v) {
-    return constant_area_.AppendInt32(v);
-  }
+  int AddInt32(int32_t v) { return constant_area_.AddInt32(v); }
 
   // Add an int64_t to the constant area, returning the offset into
   // the constant area where the literal resides.
-  size_t AddInt64(int64_t v) { return constant_area_.AddInt64(v); }
+  int AddInt64(int64_t v) { return constant_area_.AddInt64(v); }
 
   // Add the contents of the constant area to the assembler buffer.
   void AddConstantArea();
 
   // Is the constant area empty? Return true if there are no literals in the constant area.
-  bool IsConstantAreaEmpty() const { return constant_area_.IsEmpty(); }
-
-  // Return the current size of the constant area.
-  size_t ConstantAreaSize() const { return constant_area_.GetSize(); }
+  bool IsConstantAreaEmpty() const { return constant_area_.GetSize() == 0; }
+  size_t GetInitializedConstantAreaSize() const { return constant_area_.GetInitializedSize(); }
+  void AddConstantAreaFixup(AssemblerFixup* fixup) { constant_area_.AddFixup(fixup); }
+  int AllocateConstantAreaWords(int num_words) {
+    return constant_area_.AddZeroWords(num_words);
+  }
 
  private:
   inline void EmitUint8(uint8_t value);

@@ -12,6 +12,9 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Modified by Intel Corporation
+ *
  */
 
 #include "licm.h"
@@ -79,15 +82,8 @@ static void UpdateLoopPhisIn(HEnvironment* environment, HLoopInformation* info) 
 
 void LICM::Run() {
   DCHECK(side_effects_.HasRun());
-
   // Only used during debug.
-  ArenaBitVector* visited = nullptr;
-  if (kIsDebugBuild) {
-    visited = new (graph_->GetArena()) ArenaBitVector(graph_->GetArena(),
-                                                      graph_->GetBlocks().size(),
-                                                      false,
-                                                      kArenaAllocLICM);
-  }
+  ArenaBitVector visited(graph_->GetArena(), graph_->GetBlocks().Size(), false);
 
   // Post order visit to visit inner loops before outer loops.
   for (HPostOrderIterator it(*graph_); !it.Done(); it.Advance()) {
@@ -106,19 +102,10 @@ void LICM::Run() {
       DCHECK(inner->IsInLoop());
       if (inner->GetLoopInformation() != loop_info) {
         // Thanks to post order visit, inner loops were already visited.
-        DCHECK(visited->IsBitSet(inner->GetBlockId()));
+        DCHECK(visited.IsBitSet(inner->GetBlockId()));
         continue;
       }
-      if (kIsDebugBuild) {
-        visited->SetBit(inner->GetBlockId());
-      }
-
-      if (loop_info->ContainsIrreducibleLoop()) {
-        // We cannot licm in an irreducible loop, or in a natural loop containing an
-        // irreducible loop.
-        continue;
-      }
-      DCHECK(!loop_info->IsIrreducible());
+      visited.SetBit(inner->GetBlockId());
 
       // We can move an instruction that can throw only if it is the first
       // throwing instruction in the loop. Note that the first potentially
@@ -131,17 +118,15 @@ void LICM::Run() {
         HInstruction* instruction = inst_it.Current();
         if (instruction->CanBeMoved()
             && (!instruction->CanThrow() || !found_first_non_hoisted_throwing_instruction_in_loop)
-            && !instruction->GetSideEffects().MayDependOn(loop_effects)
+            && !instruction->GetSideEffects().DependsOn(loop_effects)
             && InputsAreDefinedBeforeLoop(instruction)) {
           // We need to update the environment if the instruction has a loop header
           // phi in it.
           if (instruction->NeedsEnvironment()) {
             UpdateLoopPhisIn(instruction->GetEnvironment(), loop_info);
-          } else {
-            DCHECK(!instruction->HasEnvironment());
           }
           instruction->MoveBefore(pre_header->GetLastInstruction());
-          MaybeRecordStat(MethodCompilationStat::kLoopInvariantMoved);
+          MaybeRecordStat(MethodCompilationStat::kLICM);
         } else if (instruction->CanThrow()) {
           // If `instruction` can throw, we cannot move further instructions
           // that can throw as well.

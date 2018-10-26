@@ -13,11 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+# Modified by Intel Corporation
+#
+#
 
 ifndef ART_ANDROID_COMMON_TEST_MK
 ART_ANDROID_COMMON_TEST_MK = true
 
-include art/build/Android.common_path.mk
+include $(VENDOR_ART_PATH)/build/Android.common_path.mk
 
 # We need to set a define for the nativetest dir so that common_runtime_test will know the right
 # path. (The problem is being a 32b test on 64b device, which is still located in nativetest64).
@@ -26,10 +29,6 @@ ART_TARGET_CFLAGS += -DART_TARGET_NATIVETEST_DIR=${ART_TARGET_NATIVETEST_DIR}
 # List of known broken tests that we won't attempt to execute. The test name must be the full
 # rule name such as test-art-host-oat-optimizing-HelloWorld64.
 ART_TEST_KNOWN_BROKEN :=
-
-# List of run-tests to skip running in any configuration. This needs to be the full name of the
-# run-test such as '457-regs'.
-ART_TEST_RUN_TEST_SKIP ?=
 
 # Failing valgrind tests.
 # Note: *all* 64b tests involving the runtime do not work currently. b/15170219.
@@ -44,18 +43,17 @@ ART_TEST_KEEP_GOING ?= true
 # Do you want all tests, even those that are time consuming?
 ART_TEST_FULL ?= false
 
-# Do you want run-test to be quieter? run-tests will only show output if they fail.
-ART_TEST_QUIET ?= true
+# Do you want default compiler tests run?
+ART_TEST_DEFAULT_COMPILER ?= true
 
 # Do you want interpreter tests run?
 ART_TEST_INTERPRETER ?= $(ART_TEST_FULL)
-ART_TEST_INTERPRETER_ACCESS_CHECKS ?= $(ART_TEST_FULL)
 
 # Do you want JIT tests run?
 ART_TEST_JIT ?= $(ART_TEST_FULL)
 
 # Do you want optimizing compiler tests run?
-ART_TEST_OPTIMIZING ?= true
+ART_TEST_OPTIMIZING ?= $(ART_TEST_FULL)
 
 # Do we want to test a PIC-compiled core image?
 ART_TEST_PIC_IMAGE ?= $(ART_TEST_FULL)
@@ -111,9 +109,6 @@ ART_TEST_RUN_TEST_ALWAYS_CLEAN ?= true
 # Do you want run-tests with the --debuggable flag
 ART_TEST_RUN_TEST_DEBUGGABLE ?= $(ART_TEST_FULL)
 
-# Do you want to test multi-part boot-image functionality?
-ART_TEST_RUN_TEST_MULTI_IMAGE ?= $(ART_TEST_FULL)
-
 # Define the command run on test failure. $(1) is the name of the test. Executed by the shell.
 define ART_TEST_FAILED
   ( [ -f $(ART_HOST_TEST_DIR)/skipped/$(1) ] || \
@@ -123,25 +118,12 @@ define ART_TEST_FAILED
         || (echo -e "$(1) \e[91mFAILED\e[0m" >&2 )))
 endef
 
-ifeq ($(ART_TEST_QUIET),true)
-  ART_TEST_ANNOUNCE_PASS := ( true )
-  ART_TEST_ANNOUNCE_RUN := ( true )
-  ART_TEST_ANNOUNCE_SKIP_FAILURE := ( true )
-  ART_TEST_ANNOUNCE_SKIP_BROKEN := ( true )
-else
-  # Note the use of '=' and not ':=' is intentional since these are actually functions.
-  ART_TEST_ANNOUNCE_PASS = ( echo -e "$(1) \e[92mPASSED\e[0m" )
-  ART_TEST_ANNOUNCE_RUN = ( echo -e "$(1) \e[95mRUNNING\e[0m")
-  ART_TEST_ANNOUNCE_SKIP_FAILURE = ( echo -e "$(1) \e[93mSKIPPING DUE TO EARLIER FAILURE\e[0m" )
-  ART_TEST_ANNOUNCE_SKIP_BROKEN = ( echo -e "$(1) \e[93mSKIPPING BROKEN TEST\e[0m" )
-endif
-
 # Define the command run on test success. $(1) is the name of the test. Executed by the shell.
 # The command checks prints "PASSED" then checks to see if this was a top-level make target (e.g.
 # "mm test-art-host-oat-HelloWorld32"), if it was then it does nothing, otherwise it creates a file
 # to be printed in the passing test summary.
 define ART_TEST_PASSED
-  ( $(call ART_TEST_ANNOUNCE_PASS,$(1)) && \
+  ( echo -e "$(1) \e[92mPASSED\e[0m" && \
     (echo $(MAKECMDGOALS) | grep -q $(1) || \
       (mkdir -p $(ART_HOST_TEST_DIR)/passed/ && touch $(ART_HOST_TEST_DIR)/passed/$(1))))
 endef
@@ -170,11 +152,11 @@ endef
 define ART_TEST_SKIP
   ((echo $(ART_TEST_KNOWN_BROKEN) | grep -q -v $(1) \
      && ([ ! -d $(ART_HOST_TEST_DIR)/failed/ ] || [ $(ART_TEST_KEEP_GOING) = true ])\
-     && $(call ART_TEST_ANNOUNCE_RUN,$(1)) ) \
+     && echo -e "$(1) \e[95mRUNNING\e[0m") \
    || ((mkdir -p $(ART_HOST_TEST_DIR)/skipped/ && touch $(ART_HOST_TEST_DIR)/skipped/$(1) \
      && ([ -d $(ART_HOST_TEST_DIR)/failed/ ] \
-       && $(call ART_TEST_ANNOUNCE_SKIP_FAILURE,$(1)) ) \
-     || $(call ART_TEST_ANNOUNCE_SKIP_BROKEN,$(1)) ) && false))
+       && echo -e "$(1) \e[93mSKIPPING DUE TO EARLIER FAILURE\e[0m") \
+     || echo -e "$(1) \e[93mSKIPPING BROKEN TEST\e[0m") && false))
 endef
 
 # Create a build rule to create the dex file for a test.
@@ -195,12 +177,13 @@ define build-art-test-dex
     LOCAL_SRC_FILES := $(call all-java-files-under, $(2))
     LOCAL_NO_STANDARD_LIBRARIES := true
     LOCAL_DEX_PREOPT := false
-    LOCAL_ADDITIONAL_DEPENDENCIES := art/build/Android.common_test.mk $(4)
+    LOCAL_ADDITIONAL_DEPENDENCIES := $(VENDOR_ART_PATH)/build/Android.common_test.mk $(4)
     LOCAL_MODULE_TAGS := tests
     LOCAL_JAVA_LIBRARIES := $(TARGET_CORE_JARS)
     LOCAL_MODULE_PATH := $(3)
     LOCAL_DEX_PREOPT_IMAGE_LOCATION := $(TARGET_CORE_IMG_OUT)
     ifneq ($(wildcard $(LOCAL_PATH)/$(2)/main.list),)
+      LOCAL_DX_FLAGS := --multi-dex --main-dex-list=$(LOCAL_PATH)/$(2)/main.list --minimal-main-dex
       LOCAL_JACK_FLAGS := -D jack.dex.output.policy=minimal-multidex -D jack.preprocessor=true -D jack.preprocessor.file=$(LOCAL_PATH)/$(2)/main.jpp
     endif
     include $(BUILD_JAVA_LIBRARY)
@@ -212,10 +195,11 @@ define build-art-test-dex
     LOCAL_SRC_FILES := $(call all-java-files-under, $(2))
     LOCAL_NO_STANDARD_LIBRARIES := true
     LOCAL_DEX_PREOPT := false
-    LOCAL_ADDITIONAL_DEPENDENCIES := art/build/Android.common_test.mk $(4)
+    LOCAL_ADDITIONAL_DEPENDENCIES := $(VENDOR_ART_PATH)/build/Android.common_test.mk $(4)
     LOCAL_JAVA_LIBRARIES := $(HOST_CORE_JARS)
     LOCAL_DEX_PREOPT_IMAGE := $(HOST_CORE_IMG_LOCATION)
     ifneq ($(wildcard $(LOCAL_PATH)/$(2)/main.list),)
+      LOCAL_DX_FLAGS := --multi-dex --main-dex-list=$(LOCAL_PATH)/$(2)/main.list --minimal-main-dex
       LOCAL_JACK_FLAGS := -D jack.dex.output.policy=minimal-multidex -D jack.preprocessor=true -D jack.preprocessor.file=$(LOCAL_PATH)/$(2)/main.jpp
     endif
     include $(BUILD_HOST_DALVIK_JAVA_LIBRARY)

@@ -2,14 +2,9 @@ public class Main {
   public Main() {
   }
 
-  boolean doThrow = false;
-
-  int $noinline$f() throws Exception {
+  int f() {
     g(1);
     g(2);
-
-    // This currently defeats inlining of `f`.
-    if (doThrow) { throw new Error(); }
     return 0;
   }
 
@@ -87,9 +82,12 @@ public class Main {
 
   native int stackmap(int x);
 
-  public static void main(String[] args) throws Exception {
-    System.loadLibrary(args[0]);
+  static {
+    System.loadLibrary("arttest");
+  }
+
+  public static void main(String[] args) {
     Main st = new Main();
-    st.$noinline$f();
+    st.f();
   }
 }

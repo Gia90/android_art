@@ -18,17 +18,20 @@
 
 #include "garbage_collector.h"
 
+#define ATRACE_TAG ATRACE_TAG_DALVIK
+#include "cutils/trace.h"
+
 #include "base/dumpable.h"
 #include "base/histogram-inl.h"
 #include "base/logging.h"
 #include "base/mutex-inl.h"
-#include "base/systrace.h"
 #include "base/time_utils.h"
 #include "gc/accounting/heap_bitmap.h"
 #include "gc/space/large_object_space.h"
 #include "gc/space/space-inl.h"
 #include "thread-inl.h"
 #include "thread_list.h"
+#include "gc/gcprofiler.h"
 #include "utils.h"
 
 namespace art {
@@ -43,6 +46,8 @@ Iteration::Iteration()
 void Iteration::Reset(GcCause gc_cause, bool clear_soft_references) {
   timings_.Reset();
   pause_times_.clear();
+  mark_time_ = 0;
+  sweep_time_ = 0;
   duration_ns_ = 0;
   clear_soft_references_ = clear_soft_references;
   gc_cause_ = gc_cause;
@@ -69,6 +74,14 @@ void GarbageCollector::RegisterPause(uint64_t nano_length) {
   GetCurrentIteration()->pause_times_.push_back(nano_length);
 }
 
+void GarbageCollector::RegisterMark(uint64_t nano_length) {
+  GetCurrentIteration()->mark_time_ = nano_length;
+}
+
+void GarbageCollector::RegisterSweep(uint64_t nano_length) {
+  GetCurrentIteration()->sweep_time_ = nano_length;
+}
+
 void GarbageCollector::ResetCumulativeStatistics() {
   cumulative_timings_.Reset();
   total_time_ns_ = 0;
@@ -79,7 +92,7 @@ void GarbageCollector::ResetCumulativeStatistics() {
 }
 
 void GarbageCollector::Run(GcCause gc_cause, bool clear_soft_references) {
-  ScopedTrace trace(StringPrintf("%s %s GC", PrettyCause(gc_cause), GetName()));
+  ATRACE_BEGIN(StringPrintf("%s %s GC", PrettyCause(gc_cause), GetName()).c_str());
   Thread* self = Thread::Current();
   uint64_t start_time = NanoTime();
   Iteration* current_iteration = GetCurrentIteration();
@@ -104,6 +117,17 @@ void GarbageCollector::Run(GcCause gc_cause, bool clear_soft_references) {
   for (uint64_t pause_time : current_iteration->GetPauseTimes()) {
     MutexLock mu(self, pause_histogram_lock_);
     pause_histogram_.AdjustAndAddValue(pause_time);
+  }
+  ATRACE_END();
+  // Update max mark/sweep/pause times for gc profile.
+  if (Runtime::Current()->EnabledGcProfile()) {
+    uint64_t pause_max = 0;
+    GcProfiler* gcProfiler = GcProfiler::GetInstance();
+    // Pause time is more than timesplit in pause phase.
+    for (uint64_t pause_time : current_iteration->GetPauseTimes()) {
+      pause_max = std::max(pause_max, pause_time);
+    }
+    gcProfiler->SetGCTimes(pause_max, current_iteration->GetMarkTime(), current_iteration->GetSweepTime());
   }
 }
 

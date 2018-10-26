@@ -26,7 +26,6 @@
 
 #include "base/bit_utils.h"
 #include "base/time_utils.h"
-#include "utils.h"
 
 namespace art {
 
@@ -67,7 +66,7 @@ inline void Histogram<Value>::GrowBuckets(Value new_max) {
   while (max_ < new_max) {
     // If we have reached the maximum number of buckets, merge buckets together.
     if (frequency_.size() >= max_buckets_) {
-      CHECK_ALIGNED(frequency_.size(), 2);
+      CHECK(IsAligned<2>(frequency_.size()));
       // We double the width of each bucket to reduce the number of buckets by a factor of 2.
       bucket_width_ *= 2;
       const size_t limit = frequency_.size() / 2;
@@ -198,13 +197,6 @@ inline void Histogram<Value>::PrintConfidenceIntervals(std::ostream &os, double 
      << "-" << FormatDuration(Percentile(per_1, data) * kAdjust, unit, kFractionalDigits) << " "
      << "Avg: " << FormatDuration(Mean() * kAdjust, unit, kFractionalDigits) << " Max: "
      << FormatDuration(Max() * kAdjust, unit, kFractionalDigits) << "\n";
-}
-
-template <class Value>
-inline void Histogram<Value>::PrintMemoryUse(std::ostream &os) const {
-  os << Name()
-     << ": Avg: " << PrettySize(Mean()) << " Max: "
-     << PrettySize(Max()) << " Min: " << PrettySize(Min()) << "\n";
 }
 
 template <class Value>

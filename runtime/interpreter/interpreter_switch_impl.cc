@@ -14,13 +14,8 @@
  * limitations under the License.
  */
 
-#include "base/stl_util.h"  // MakeUnique
-#include "experimental_flags.h"
 #include "interpreter_common.h"
-#include "jit/jit.h"
 #include "safe_math.h"
-
-#include <memory>  // std::unique_ptr
 
 namespace art {
 namespace interpreter {
@@ -33,12 +28,6 @@ namespace interpreter {
                                                                   inst->GetDexPc(insns),        \
                                                                   instrumentation);             \
     if (found_dex_pc == DexFile::kDexNoIndex) {                                                 \
-      /* Structured locking is to be enforced for abnormal termination, too. */                 \
-      DoMonitorCheckOnExit<do_assignability_check>(self, &shadow_frame);                        \
-      if (interpret_one_instruction) {                                                          \
-        /* Signal mterp to return to caller */                                                  \
-        shadow_frame.SetDexPC(DexFile::kDexNoIndex);                                            \
-      }                                                                                         \
       return JValue(); /* Handled in caller. */                                                 \
     } else {                                                                                    \
       int32_t displacement = static_cast<int32_t>(found_dex_pc) - static_cast<int32_t>(dex_pc); \
@@ -55,11 +44,6 @@ namespace interpreter {
     }                                                                             \
   } while (false)
 
-#define HANDLE_MONITOR_CHECKS()                                                                   \
-  if (!DoMonitorCheckOnExit<do_assignability_check>(self, &shadow_frame)) {                       \
-    HANDLE_PENDING_EXCEPTION();                                                                   \
-  }
-
 // Code to run before each dex instruction.
 #define PREAMBLE()                                                                              \
   do {                                                                                          \
@@ -69,38 +53,10 @@ namespace interpreter {
     }                                                                                           \
   } while (false)
 
-#define BRANCH_INSTRUMENTATION(offset)                                                         \
-  do {                                                                                         \
-    if (UNLIKELY(instrumentation->HasBranchListeners())) {                                     \
-      instrumentation->Branch(self, method, dex_pc, offset);                                   \
-    }                                                                                          \
-    JValue result;                                                                             \
-    if (jit::Jit::MaybeDoOnStackReplacement(self, method, dex_pc, offset, &result)) {          \
-      if (interpret_one_instruction) {                                                         \
-        /* OSR has completed execution of the method.  Signal mterp to return to caller */     \
-        shadow_frame.SetDexPC(DexFile::kDexNoIndex);                                           \
-      }                                                                                        \
-      return result;                                                                           \
-    }                                                                                          \
-  } while (false)
-
-#define HOTNESS_UPDATE()                                                                       \
-  do {                                                                                         \
-    if (jit != nullptr) {                                                                      \
-      jit->AddSamples(self, method, 1, /*with_backedges*/ true);                               \
-    }                                                                                          \
-  } while (false)
-
-static bool IsExperimentalInstructionEnabled(const Instruction *inst) {
-  DCHECK(inst->IsExperimental());
-  return Runtime::Current()->AreExperimentalFlagsEnabled(ExperimentalFlags::kLambdas);
-}
-
 template<bool do_access_check, bool transaction_active>
 JValue ExecuteSwitchImpl(Thread* self, const DexFile::CodeItem* code_item,
-                         ShadowFrame& shadow_frame, JValue result_register,
-                         bool interpret_one_instruction) {
-  constexpr bool do_assignability_check = do_access_check;
+                         ShadowFrame& shadow_frame, JValue result_register) {
+  bool do_assignability_check = do_access_check;
   if (UNLIKELY(!shadow_frame.HasReferenceArray())) {
     LOG(FATAL) << "Invalid shadow frame for interpreter use";
     return JValue();
@@ -109,17 +65,19 @@ JValue ExecuteSwitchImpl(Thread* self, const DexFile::CodeItem* code_item,
 
   uint32_t dex_pc = shadow_frame.GetDexPC();
   const auto* const instrumentation = Runtime::Current()->GetInstrumentation();
+  if (LIKELY(dex_pc == 0)) {  // We are entering the method as opposed to deoptimizing.
+    if (kIsDebugBuild) {
+        self->AssertNoPendingException();
+    }
+    if (UNLIKELY(instrumentation->HasMethodEntryListeners())) {
+      instrumentation->MethodEnterEvent(self, shadow_frame.GetThisObject(code_item->ins_size_),
+                                        shadow_frame.GetMethod(), 0);
+    }
+  }
   const uint16_t* const insns = code_item->insns_;
   const Instruction* inst = Instruction::At(insns + dex_pc);
   uint16_t inst_data;
-  ArtMethod* method = shadow_frame.GetMethod();
-  jit::Jit* jit = Runtime::Current()->GetJit();
-
-  // TODO: collapse capture-variable+create-lambda into one opcode, then we won't need
-  // to keep this live for the scope of the entire function call.
-  std::unique_ptr<lambda::ClosureBuilder> lambda_closure_builder;
-  size_t lambda_captured_variable_index = 0;
-  do {
+  while (true) {
     dex_pc = inst->GetDexPc(insns);
     shadow_frame.SetDexPC(dex_pc);
     TraceExecution(shadow_frame, inst, dex_pc);
@@ -211,15 +169,10 @@ JValue ExecuteSwitchImpl(Thread* self, const DexFile::CodeItem* code_item,
         PREAMBLE();
         JValue result;
         self->AllowThreadSuspension();
-        HANDLE_MONITOR_CHECKS();
         if (UNLIKELY(instrumentation->HasMethodExitListeners())) {
           instrumentation->MethodExitEvent(self, shadow_frame.GetThisObject(code_item->ins_size_),
                                            shadow_frame.GetMethod(), inst->GetDexPc(insns),
                                            result);
-        }
-        if (interpret_one_instruction) {
-          /* Signal mterp to return to caller */
-          shadow_frame.SetDexPC(DexFile::kDexNoIndex);
         }
         return result;
       }
@@ -228,15 +181,10 @@ JValue ExecuteSwitchImpl(Thread* self, const DexFile::CodeItem* code_item,
         QuasiAtomic::ThreadFenceForConstructor();
         JValue result;
         self->AllowThreadSuspension();
-        HANDLE_MONITOR_CHECKS();
         if (UNLIKELY(instrumentation->HasMethodExitListeners())) {
           instrumentation->MethodExitEvent(self, shadow_frame.GetThisObject(code_item->ins_size_),
                                            shadow_frame.GetMethod(), inst->GetDexPc(insns),
                                            result);
-        }
-        if (interpret_one_instruction) {
-          /* Signal mterp to return to caller */
-          shadow_frame.SetDexPC(DexFile::kDexNoIndex);
         }
         return result;
       }
@@ -246,15 +194,10 @@ JValue ExecuteSwitchImpl(Thread* self, const DexFile::CodeItem* code_item,
         result.SetJ(0);
         result.SetI(shadow_frame.GetVReg(inst->VRegA_11x(inst_data)));
         self->AllowThreadSuspension();
-        HANDLE_MONITOR_CHECKS();
         if (UNLIKELY(instrumentation->HasMethodExitListeners())) {
           instrumentation->MethodExitEvent(self, shadow_frame.GetThisObject(code_item->ins_size_),
                                            shadow_frame.GetMethod(), inst->GetDexPc(insns),
                                            result);
-        }
-        if (interpret_one_instruction) {
-          /* Signal mterp to return to caller */
-          shadow_frame.SetDexPC(DexFile::kDexNoIndex);
         }
         return result;
       }
@@ -263,15 +206,10 @@ JValue ExecuteSwitchImpl(Thread* self, const DexFile::CodeItem* code_item,
         JValue result;
         result.SetJ(shadow_frame.GetVRegLong(inst->VRegA_11x(inst_data)));
         self->AllowThreadSuspension();
-        HANDLE_MONITOR_CHECKS();
         if (UNLIKELY(instrumentation->HasMethodExitListeners())) {
           instrumentation->MethodExitEvent(self, shadow_frame.GetThisObject(code_item->ins_size_),
                                            shadow_frame.GetMethod(), inst->GetDexPc(insns),
                                            result);
-        }
-        if (interpret_one_instruction) {
-          /* Signal mterp to return to caller */
-          shadow_frame.SetDexPC(DexFile::kDexNoIndex);
         }
         return result;
       }
@@ -279,13 +217,10 @@ JValue ExecuteSwitchImpl(Thread* self, const DexFile::CodeItem* code_item,
         PREAMBLE();
         JValue result;
         self->AllowThreadSuspension();
-        HANDLE_MONITOR_CHECKS();
         const size_t ref_idx = inst->VRegA_11x(inst_data);
         Object* obj_result = shadow_frame.GetVRegReference(ref_idx);
         if (do_assignability_check && obj_result != nullptr) {
-          size_t pointer_size = Runtime::Current()->GetClassLinker()->GetImagePointerSize();
-          Class* return_type = shadow_frame.GetMethod()->GetReturnType(true /* resolve */,
-                                                                       pointer_size);
+          Class* return_type = shadow_frame.GetMethod()->GetReturnType();
           // Re-load since it might have moved.
           obj_result = shadow_frame.GetVRegReference(ref_idx);
           if (return_type == nullptr) {
@@ -307,10 +242,6 @@ JValue ExecuteSwitchImpl(Thread* self, const DexFile::CodeItem* code_item,
           instrumentation->MethodExitEvent(self, shadow_frame.GetThisObject(code_item->ins_size_),
                                            shadow_frame.GetMethod(), inst->GetDexPc(insns),
                                            result);
-        }
-        if (interpret_one_instruction) {
-          /* Signal mterp to return to caller */
-          shadow_frame.SetDexPC(DexFile::kDexNoIndex);
         }
         return result;
       }
@@ -420,7 +351,7 @@ JValue ExecuteSwitchImpl(Thread* self, const DexFile::CodeItem* code_item,
           ThrowNullPointerExceptionFromInterpreter();
           HANDLE_PENDING_EXCEPTION();
         } else {
-          DoMonitorEnter<do_assignability_check>(self, &shadow_frame, obj);
+          DoMonitorEnter(self, obj);
           POSSIBLY_HANDLE_PENDING_EXCEPTION(self->IsExceptionPending(), Next_1xx);
         }
         break;
@@ -432,7 +363,7 @@ JValue ExecuteSwitchImpl(Thread* self, const DexFile::CodeItem* code_item,
           ThrowNullPointerExceptionFromInterpreter();
           HANDLE_PENDING_EXCEPTION();
         } else {
-          DoMonitorExit<do_assignability_check>(self, &shadow_frame, obj);
+          DoMonitorExit(self, obj);
           POSSIBLY_HANDLE_PENDING_EXCEPTION(self->IsExceptionPending(), Next_1xx);
         }
         break;
@@ -580,9 +511,7 @@ JValue ExecuteSwitchImpl(Thread* self, const DexFile::CodeItem* code_item,
       case Instruction::GOTO: {
         PREAMBLE();
         int8_t offset = inst->VRegA_10t(inst_data);
-        BRANCH_INSTRUMENTATION(offset);
         if (IsBackwardBranch(offset)) {
-          HOTNESS_UPDATE();
           self->AllowThreadSuspension();
         }
         inst = inst->RelativeAt(offset);
@@ -591,9 +520,7 @@ JValue ExecuteSwitchImpl(Thread* self, const DexFile::CodeItem* code_item,
       case Instruction::GOTO_16: {
         PREAMBLE();
         int16_t offset = inst->VRegA_20t();
-        BRANCH_INSTRUMENTATION(offset);
         if (IsBackwardBranch(offset)) {
-          HOTNESS_UPDATE();
           self->AllowThreadSuspension();
         }
         inst = inst->RelativeAt(offset);
@@ -602,9 +529,7 @@ JValue ExecuteSwitchImpl(Thread* self, const DexFile::CodeItem* code_item,
       case Instruction::GOTO_32: {
         PREAMBLE();
         int32_t offset = inst->VRegA_30t();
-        BRANCH_INSTRUMENTATION(offset);
         if (IsBackwardBranch(offset)) {
-          HOTNESS_UPDATE();
           self->AllowThreadSuspension();
         }
         inst = inst->RelativeAt(offset);
@@ -613,9 +538,7 @@ JValue ExecuteSwitchImpl(Thread* self, const DexFile::CodeItem* code_item,
       case Instruction::PACKED_SWITCH: {
         PREAMBLE();
         int32_t offset = DoPackedSwitch(inst, shadow_frame, inst_data);
-        BRANCH_INSTRUMENTATION(offset);
         if (IsBackwardBranch(offset)) {
-          HOTNESS_UPDATE();
           self->AllowThreadSuspension();
         }
         inst = inst->RelativeAt(offset);
@@ -624,9 +547,7 @@ JValue ExecuteSwitchImpl(Thread* self, const DexFile::CodeItem* code_item,
       case Instruction::SPARSE_SWITCH: {
         PREAMBLE();
         int32_t offset = DoSparseSwitch(inst, shadow_frame, inst_data);
-        BRANCH_INSTRUMENTATION(offset);
         if (IsBackwardBranch(offset)) {
-          HOTNESS_UPDATE();
           self->AllowThreadSuspension();
         }
         inst = inst->RelativeAt(offset);
@@ -729,14 +650,11 @@ JValue ExecuteSwitchImpl(Thread* self, const DexFile::CodeItem* code_item,
         if (shadow_frame.GetVReg(inst->VRegA_22t(inst_data)) ==
             shadow_frame.GetVReg(inst->VRegB_22t(inst_data))) {
           int16_t offset = inst->VRegC_22t();
-          BRANCH_INSTRUMENTATION(offset);
           if (IsBackwardBranch(offset)) {
-            HOTNESS_UPDATE();
             self->AllowThreadSuspension();
           }
           inst = inst->RelativeAt(offset);
         } else {
-          BRANCH_INSTRUMENTATION(2);
           inst = inst->Next_2xx();
         }
         break;
@@ -746,14 +664,11 @@ JValue ExecuteSwitchImpl(Thread* self, const DexFile::CodeItem* code_item,
         if (shadow_frame.GetVReg(inst->VRegA_22t(inst_data)) !=
             shadow_frame.GetVReg(inst->VRegB_22t(inst_data))) {
           int16_t offset = inst->VRegC_22t();
-          BRANCH_INSTRUMENTATION(offset);
           if (IsBackwardBranch(offset)) {
-            HOTNESS_UPDATE();
             self->AllowThreadSuspension();
           }
           inst = inst->RelativeAt(offset);
         } else {
-          BRANCH_INSTRUMENTATION(2);
           inst = inst->Next_2xx();
         }
         break;
@@ -763,14 +678,11 @@ JValue ExecuteSwitchImpl(Thread* self, const DexFile::CodeItem* code_item,
         if (shadow_frame.GetVReg(inst->VRegA_22t(inst_data)) <
             shadow_frame.GetVReg(inst->VRegB_22t(inst_data))) {
           int16_t offset = inst->VRegC_22t();
-          BRANCH_INSTRUMENTATION(offset);
           if (IsBackwardBranch(offset)) {
-            HOTNESS_UPDATE();
             self->AllowThreadSuspension();
           }
           inst = inst->RelativeAt(offset);
         } else {
-          BRANCH_INSTRUMENTATION(2);
           inst = inst->Next_2xx();
         }
         break;
@@ -780,14 +692,11 @@ JValue ExecuteSwitchImpl(Thread* self, const DexFile::CodeItem* code_item,
         if (shadow_frame.GetVReg(inst->VRegA_22t(inst_data)) >=
             shadow_frame.GetVReg(inst->VRegB_22t(inst_data))) {
           int16_t offset = inst->VRegC_22t();
-          BRANCH_INSTRUMENTATION(offset);
           if (IsBackwardBranch(offset)) {
-            HOTNESS_UPDATE();
             self->AllowThreadSuspension();
           }
           inst = inst->RelativeAt(offset);
         } else {
-          BRANCH_INSTRUMENTATION(2);
           inst = inst->Next_2xx();
         }
         break;
@@ -797,14 +706,11 @@ JValue ExecuteSwitchImpl(Thread* self, const DexFile::CodeItem* code_item,
         if (shadow_frame.GetVReg(inst->VRegA_22t(inst_data)) >
         shadow_frame.GetVReg(inst->VRegB_22t(inst_data))) {
           int16_t offset = inst->VRegC_22t();
-          BRANCH_INSTRUMENTATION(offset);
           if (IsBackwardBranch(offset)) {
-            HOTNESS_UPDATE();
             self->AllowThreadSuspension();
           }
           inst = inst->RelativeAt(offset);
         } else {
-          BRANCH_INSTRUMENTATION(2);
           inst = inst->Next_2xx();
         }
         break;
@@ -814,14 +720,11 @@ JValue ExecuteSwitchImpl(Thread* self, const DexFile::CodeItem* code_item,
         if (shadow_frame.GetVReg(inst->VRegA_22t(inst_data)) <=
             shadow_frame.GetVReg(inst->VRegB_22t(inst_data))) {
           int16_t offset = inst->VRegC_22t();
-          BRANCH_INSTRUMENTATION(offset);
           if (IsBackwardBranch(offset)) {
-            HOTNESS_UPDATE();
             self->AllowThreadSuspension();
           }
           inst = inst->RelativeAt(offset);
         } else {
-          BRANCH_INSTRUMENTATION(2);
           inst = inst->Next_2xx();
         }
         break;
@@ -830,14 +733,11 @@ JValue ExecuteSwitchImpl(Thread* self, const DexFile::CodeItem* code_item,
         PREAMBLE();
         if (shadow_frame.GetVReg(inst->VRegA_21t(inst_data)) == 0) {
           int16_t offset = inst->VRegB_21t();
-          BRANCH_INSTRUMENTATION(offset);
           if (IsBackwardBranch(offset)) {
-            HOTNESS_UPDATE();
             self->AllowThreadSuspension();
           }
           inst = inst->RelativeAt(offset);
         } else {
-          BRANCH_INSTRUMENTATION(2);
           inst = inst->Next_2xx();
         }
         break;
@@ -846,14 +746,11 @@ JValue ExecuteSwitchImpl(Thread* self, const DexFile::CodeItem* code_item,
         PREAMBLE();
         if (shadow_frame.GetVReg(inst->VRegA_21t(inst_data)) != 0) {
           int16_t offset = inst->VRegB_21t();
-          BRANCH_INSTRUMENTATION(offset);
           if (IsBackwardBranch(offset)) {
-            HOTNESS_UPDATE();
             self->AllowThreadSuspension();
           }
           inst = inst->RelativeAt(offset);
         } else {
-          BRANCH_INSTRUMENTATION(2);
           inst = inst->Next_2xx();
         }
         break;
@@ -862,14 +759,11 @@ JValue ExecuteSwitchImpl(Thread* self, const DexFile::CodeItem* code_item,
         PREAMBLE();
         if (shadow_frame.GetVReg(inst->VRegA_21t(inst_data)) < 0) {
           int16_t offset = inst->VRegB_21t();
-          BRANCH_INSTRUMENTATION(offset);
           if (IsBackwardBranch(offset)) {
-            HOTNESS_UPDATE();
             self->AllowThreadSuspension();
           }
           inst = inst->RelativeAt(offset);
         } else {
-          BRANCH_INSTRUMENTATION(2);
           inst = inst->Next_2xx();
         }
         break;
@@ -878,14 +772,11 @@ JValue ExecuteSwitchImpl(Thread* self, const DexFile::CodeItem* code_item,
         PREAMBLE();
         if (shadow_frame.GetVReg(inst->VRegA_21t(inst_data)) >= 0) {
           int16_t offset = inst->VRegB_21t();
-          BRANCH_INSTRUMENTATION(offset);
           if (IsBackwardBranch(offset)) {
-            HOTNESS_UPDATE();
             self->AllowThreadSuspension();
           }
           inst = inst->RelativeAt(offset);
         } else {
-          BRANCH_INSTRUMENTATION(2);
           inst = inst->Next_2xx();
         }
         break;
@@ -894,14 +785,11 @@ JValue ExecuteSwitchImpl(Thread* self, const DexFile::CodeItem* code_item,
         PREAMBLE();
         if (shadow_frame.GetVReg(inst->VRegA_21t(inst_data)) > 0) {
           int16_t offset = inst->VRegB_21t();
-          BRANCH_INSTRUMENTATION(offset);
           if (IsBackwardBranch(offset)) {
-            HOTNESS_UPDATE();
             self->AllowThreadSuspension();
           }
           inst = inst->RelativeAt(offset);
         } else {
-          BRANCH_INSTRUMENTATION(2);
           inst = inst->Next_2xx();
         }
         break;
@@ -910,14 +798,11 @@ JValue ExecuteSwitchImpl(Thread* self, const DexFile::CodeItem* code_item,
         PREAMBLE();
         if (shadow_frame.GetVReg(inst->VRegA_21t(inst_data)) <= 0) {
           int16_t offset = inst->VRegB_21t();
-          BRANCH_INSTRUMENTATION(offset);
           if (IsBackwardBranch(offset)) {
-            HOTNESS_UPDATE();
             self->AllowThreadSuspension();
           }
           inst = inst->RelativeAt(offset);
         } else {
-          BRANCH_INSTRUMENTATION(2);
           inst = inst->Next_2xx();
         }
         break;
@@ -2332,130 +2217,28 @@ JValue ExecuteSwitchImpl(Thread* self, const DexFile::CodeItem* code_item,
                              (inst->VRegC_22b() & 0x1f));
         inst = inst->Next_2xx();
         break;
-      case Instruction::INVOKE_LAMBDA: {
-        if (!IsExperimentalInstructionEnabled(inst)) {
-          UnexpectedOpcode(inst, shadow_frame);
-        }
-
-        PREAMBLE();
-        bool success = DoInvokeLambda<do_access_check>(self, shadow_frame, inst, inst_data,
-                                                       &result_register);
-        POSSIBLY_HANDLE_PENDING_EXCEPTION(!success, Next_2xx);
-        break;
-      }
-      case Instruction::CAPTURE_VARIABLE: {
-        if (!IsExperimentalInstructionEnabled(inst)) {
-          UnexpectedOpcode(inst, shadow_frame);
-        }
-
-        if (lambda_closure_builder == nullptr) {
-          lambda_closure_builder = MakeUnique<lambda::ClosureBuilder>();
-        }
-
-        PREAMBLE();
-        bool success = DoCaptureVariable<do_access_check>(self,
-                                                          inst,
-                                                          /*inout*/shadow_frame,
-                                                          /*inout*/lambda_closure_builder.get());
-        POSSIBLY_HANDLE_PENDING_EXCEPTION(!success, Next_2xx);
-        break;
-      }
-      case Instruction::CREATE_LAMBDA: {
-        if (!IsExperimentalInstructionEnabled(inst)) {
-          UnexpectedOpcode(inst, shadow_frame);
-        }
-
-        PREAMBLE();
-
-        if (lambda_closure_builder == nullptr) {
-          // DoCreateLambda always needs a ClosureBuilder, even if it has 0 captured variables.
-          lambda_closure_builder = MakeUnique<lambda::ClosureBuilder>();
-        }
-
-        // TODO: these allocations should not leak, and the lambda method should not be local.
-        lambda::Closure* lambda_closure =
-            reinterpret_cast<lambda::Closure*>(alloca(lambda_closure_builder->GetSize()));
-        bool success = DoCreateLambda<do_access_check>(self,
-                                                       inst,
-                                                       /*inout*/shadow_frame,
-                                                       /*inout*/lambda_closure_builder.get(),
-                                                       /*inout*/lambda_closure);
-        lambda_closure_builder.reset(nullptr);  // reset state of variables captured
-        POSSIBLY_HANDLE_PENDING_EXCEPTION(!success, Next_2xx);
-        break;
-      }
-      case Instruction::LIBERATE_VARIABLE: {
-        if (!IsExperimentalInstructionEnabled(inst)) {
-          UnexpectedOpcode(inst, shadow_frame);
-        }
-
-        PREAMBLE();
-        bool success = DoLiberateVariable<do_access_check>(self,
-                                                           inst,
-                                                           lambda_captured_variable_index,
-                                                           /*inout*/shadow_frame);
-        // Temporarily only allow sequences of 'liberate-variable, liberate-variable, ...'
-        lambda_captured_variable_index++;
-        POSSIBLY_HANDLE_PENDING_EXCEPTION(!success, Next_2xx);
-        break;
-      }
-      case Instruction::UNUSED_F4: {
-        if (!IsExperimentalInstructionEnabled(inst)) {
-          UnexpectedOpcode(inst, shadow_frame);
-        }
-
-        CHECK(false);  // TODO(iam): Implement opcodes for lambdas
-        break;
-      }
-      case Instruction::BOX_LAMBDA: {
-        if (!IsExperimentalInstructionEnabled(inst)) {
-          UnexpectedOpcode(inst, shadow_frame);
-        }
-
-        PREAMBLE();
-        bool success = DoBoxLambda<do_access_check>(self, shadow_frame, inst, inst_data);
-        POSSIBLY_HANDLE_PENDING_EXCEPTION(!success, Next_2xx);
-        break;
-      }
-      case Instruction::UNBOX_LAMBDA: {
-        if (!IsExperimentalInstructionEnabled(inst)) {
-          UnexpectedOpcode(inst, shadow_frame);
-        }
-
-        PREAMBLE();
-        bool success = DoUnboxLambda<do_access_check>(self, shadow_frame, inst, inst_data);
-        POSSIBLY_HANDLE_PENDING_EXCEPTION(!success, Next_2xx);
-        break;
-      }
       case Instruction::UNUSED_3E ... Instruction::UNUSED_43:
-      case Instruction::UNUSED_FA ... Instruction::UNUSED_FF:
+      case Instruction::UNUSED_F3 ... Instruction::UNUSED_FF:
       case Instruction::UNUSED_79:
       case Instruction::UNUSED_7A:
         UnexpectedOpcode(inst, shadow_frame);
     }
-  } while (!interpret_one_instruction);
-  // Record where we stopped.
-  shadow_frame.SetDexPC(inst->GetDexPc(insns));
-  return result_register;
+  }
 }  // NOLINT(readability/fn_size)
 
 // Explicit definitions of ExecuteSwitchImpl.
-template SHARED_REQUIRES(Locks::mutator_lock_) HOT_ATTR
+template SHARED_LOCKS_REQUIRED(Locks::mutator_lock_) HOT_ATTR
 JValue ExecuteSwitchImpl<true, false>(Thread* self, const DexFile::CodeItem* code_item,
-                                      ShadowFrame& shadow_frame, JValue result_register,
-                                      bool interpret_one_instruction);
-template SHARED_REQUIRES(Locks::mutator_lock_) HOT_ATTR
+                                      ShadowFrame& shadow_frame, JValue result_register);
+template SHARED_LOCKS_REQUIRED(Locks::mutator_lock_) HOT_ATTR
 JValue ExecuteSwitchImpl<false, false>(Thread* self, const DexFile::CodeItem* code_item,
-                                       ShadowFrame& shadow_frame, JValue result_register,
-                                       bool interpret_one_instruction);
-template SHARED_REQUIRES(Locks::mutator_lock_)
+                                       ShadowFrame& shadow_frame, JValue result_register);
+template SHARED_LOCKS_REQUIRED(Locks::mutator_lock_)
 JValue ExecuteSwitchImpl<true, true>(Thread* self, const DexFile::CodeItem* code_item,
-                                     ShadowFrame& shadow_frame, JValue result_register,
-                                     bool interpret_one_instruction);
-template SHARED_REQUIRES(Locks::mutator_lock_)
+                                     ShadowFrame& shadow_frame, JValue result_register);
+template SHARED_LOCKS_REQUIRED(Locks::mutator_lock_)
 JValue ExecuteSwitchImpl<false, true>(Thread* self, const DexFile::CodeItem* code_item,
-                                      ShadowFrame& shadow_frame, JValue result_register,
-                                      bool interpret_one_instruction);
+                                      ShadowFrame& shadow_frame, JValue result_register);
 
 }  // namespace interpreter
 }  // namespace art

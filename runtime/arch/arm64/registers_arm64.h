@@ -60,7 +60,8 @@ enum XRegister {
                  // different enum value to distinguish between the two.
   kNumberOfXRegisters = 33,
   // Aliases.
-  TR  = X19,     // ART Thread Register - Managed Runtime (Callee Saved Reg)
+  TR  = X18,     // ART Thread Register - Managed Runtime (Caller Saved Reg)
+  ETR = X21,     // ART Thread Register - External Calls  (Callee Saved Reg)
   IP0 = X16,     // Used as scratch by VIXL.
   IP1 = X17,     // Used as scratch by ART JNI Assembler.
   FP  = X29,

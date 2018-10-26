@@ -35,7 +35,7 @@ interface NativeInterface {
 public class NativeProxy {
 
     public static void main(String[] args) {
-        System.loadLibrary(args[0]);
+        System.loadLibrary("arttest");
 
         try {
             NativeInterface inf = (NativeInterface)Proxy.newProxyInstance(

@@ -12,14 +12,16 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Modified by Intel Corporation
+ *
  */
 
 #ifndef ART_COMPILER_OPTIMIZING_OPTIMIZING_COMPILER_STATS_H_
 #define ART_COMPILER_OPTIMIZING_OPTIMIZING_COMPILER_STATS_H_
 
-#include <iomanip>
+#include <sstream>
 #include <string>
-#include <type_traits>
 
 #include "atomic.h"
 
@@ -27,44 +29,54 @@ namespace art {
 
 enum MethodCompilationStat {
   kAttemptCompilation = 0,
-  kCompiled,
+  kCompiledBaseline,
+  kCompiledOptimized,
+  kCompiledQuick,
   kInlinedInvoke,
-  kReplacedInvokeWithSimplePattern,
   kInstructionSimplifications,
-  kInstructionSimplificationsArch,
-  kUnresolvedMethod,
-  kUnresolvedField,
-  kUnresolvedFieldNotAFastAccess,
-  kRemovedCheckedCast,
-  kRemovedDeadInstruction,
-  kRemovedNullCheck,
-  kNotCompiledSkipped,
-  kNotCompiledInvalidBytecode,
-  kNotCompiledThrowCatchLoop,
-  kNotCompiledAmbiguousArrayOp,
+  kNotCompiledBranchOutsideMethodCode,
+  kNotCompiledCannotBuildSSA,
+  kNotCompiledCantAccesType,
+  kNotCompiledClassNotVerified,
   kNotCompiledHugeMethod,
   kNotCompiledLargeMethodNoBranches,
   kNotCompiledMalformedOpcode,
   kNotCompiledNoCodegen,
+  kNotCompiledNonSequentialRegPair,
   kNotCompiledPathological,
   kNotCompiledSpaceFilter,
   kNotCompiledUnhandledInstruction,
+  kNotCompiledUnresolvedField,
+  kNotCompiledUnresolvedMethod,
   kNotCompiledUnsupportedIsa,
-  kNotCompiledVerificationError,
   kNotCompiledVerifyAtRuntime,
-  kInlinedMonomorphicCall,
-  kInlinedPolymorphicCall,
-  kMonomorphicCall,
-  kPolymorphicCall,
-  kMegamorphicCall,
-  kBooleanSimplified,
-  kIntrinsicRecognized,
-  kLoopInvariantMoved,
-  kSelectGenerated,
-  kRemovedInstanceOf,
-  kInlinedInvokeVirtualOrInterface,
-  kImplicitNullCheckGenerated,
-  kExplicitNullCheckGenerated,
+  kNotOptimizedDisabled,
+  kNotOptimizedRegisterAllocator,
+  kNotOptimizedTryCatch,
+  kRemovedCheckedCast,
+  kRemovedDeadInstruction,
+  kRemovedNullCheck,
+  kConstantFolding,
+  kBooleanSimplifier,
+  kReferenceTypePropagation,
+  kIntrinsicsRecognizer,
+  kLICM,
+  kIntelLoopPeeled,
+  kIntelCCS,
+  kIntelBIVFound,
+  kIntelRemoveSuspendCheck,
+  kIntelRemoveUnusedLoops,
+  kIntelRemoveTrivialLoops,
+  kIntelNonTemporalMove,
+  kIntelFormBottomLoop,
+  kIntelLHSS,
+  kIntelStoreSink,
+  kIntelSelect,
+  kIntelValuePropagationThroughHeap,
+  kIntelPureDirectCallDeleted,
+  kIntelPureStaticCallDeleted,
+  kIntelUselessNullCheckDeleted,
+  kIntelLoopFullyUnrolled,
   kLastStat
 };
 
@@ -77,79 +89,92 @@ class OptimizingCompilerStats {
   }
 
   void Log() const {
-    if (!kIsDebugBuild && !VLOG_IS_ON(compiler)) {
-      // Log only in debug builds or if the compiler is verbose.
-      return;
-    }
-
     if (compile_stats_[kAttemptCompilation] == 0) {
       LOG(INFO) << "Did not compile any method.";
     } else {
-      float compiled_percent =
-          compile_stats_[kCompiled] * 100.0f / compile_stats_[kAttemptCompilation];
-      LOG(INFO) << "Attempted compilation of " << compile_stats_[kAttemptCompilation]
-          << " methods: " << std::fixed << std::setprecision(2)
-          << compiled_percent << "% (" << compile_stats_[kCompiled] << ") compiled.";
+      size_t unoptimized_percent =
+          compile_stats_[kCompiledBaseline] * 100 / compile_stats_[kAttemptCompilation];
+      size_t optimized_percent =
+          compile_stats_[kCompiledOptimized] * 100 / compile_stats_[kAttemptCompilation];
+      size_t quick_percent =
+          compile_stats_[kCompiledQuick] * 100 / compile_stats_[kAttemptCompilation];
+      std::ostringstream oss;
+      oss << "Attempted compilation of " << compile_stats_[kAttemptCompilation] << " methods: ";
+
+      oss << unoptimized_percent << "% (" << compile_stats_[kCompiledBaseline] << ") unoptimized, ";
+      oss << optimized_percent << "% (" << compile_stats_[kCompiledOptimized] << ") optimized, ";
+      oss << quick_percent << "% (" << compile_stats_[kCompiledQuick] << ") quick.";
+
+      LOG(INFO) << oss.str();
 
       for (int i = 0; i < kLastStat; i++) {
         if (compile_stats_[i] != 0) {
-          LOG(INFO) << PrintMethodCompilationStat(static_cast<MethodCompilationStat>(i)) << ": "
-              << compile_stats_[i];
+          LOG(INFO) << PrintMethodCompilationStat(i) << ": " << compile_stats_[i];
         }
       }
     }
   }
 
- private:
-  std::string PrintMethodCompilationStat(MethodCompilationStat stat) const {
-    std::string name;
-    switch (stat) {
-      case kAttemptCompilation : name = "AttemptCompilation"; break;
-      case kCompiled : name = "Compiled"; break;
-      case kInlinedInvoke : name = "InlinedInvoke"; break;
-      case kReplacedInvokeWithSimplePattern: name = "ReplacedInvokeWithSimplePattern"; break;
-      case kInstructionSimplifications: name = "InstructionSimplifications"; break;
-      case kInstructionSimplificationsArch: name = "InstructionSimplificationsArch"; break;
-      case kUnresolvedMethod : name = "UnresolvedMethod"; break;
-      case kUnresolvedField : name = "UnresolvedField"; break;
-      case kUnresolvedFieldNotAFastAccess : name = "UnresolvedFieldNotAFastAccess"; break;
-      case kRemovedCheckedCast: name = "RemovedCheckedCast"; break;
-      case kRemovedDeadInstruction: name = "RemovedDeadInstruction"; break;
-      case kRemovedNullCheck: name = "RemovedNullCheck"; break;
-      case kNotCompiledSkipped: name = "NotCompiledSkipped"; break;
-      case kNotCompiledInvalidBytecode: name = "NotCompiledInvalidBytecode"; break;
-      case kNotCompiledThrowCatchLoop : name = "NotCompiledThrowCatchLoop"; break;
-      case kNotCompiledAmbiguousArrayOp : name = "NotCompiledAmbiguousArrayOp"; break;
-      case kNotCompiledHugeMethod : name = "NotCompiledHugeMethod"; break;
-      case kNotCompiledLargeMethodNoBranches : name = "NotCompiledLargeMethodNoBranches"; break;
-      case kNotCompiledMalformedOpcode : name = "NotCompiledMalformedOpcode"; break;
-      case kNotCompiledNoCodegen : name = "NotCompiledNoCodegen"; break;
-      case kNotCompiledPathological : name = "NotCompiledPathological"; break;
-      case kNotCompiledSpaceFilter : name = "NotCompiledSpaceFilter"; break;
-      case kNotCompiledUnhandledInstruction : name = "NotCompiledUnhandledInstruction"; break;
-      case kNotCompiledUnsupportedIsa : name = "NotCompiledUnsupportedIsa"; break;
-      case kNotCompiledVerificationError : name = "NotCompiledVerificationError"; break;
-      case kNotCompiledVerifyAtRuntime : name = "NotCompiledVerifyAtRuntime"; break;
-      case kInlinedMonomorphicCall: name = "InlinedMonomorphicCall"; break;
-      case kInlinedPolymorphicCall: name = "InlinedPolymorphicCall"; break;
-      case kMonomorphicCall: name = "MonomorphicCall"; break;
-      case kPolymorphicCall: name = "PolymorphicCall"; break;
-      case kMegamorphicCall: name = "MegamorphicCall"; break;
-      case kBooleanSimplified : name = "BooleanSimplified"; break;
-      case kIntrinsicRecognized : name = "IntrinsicRecognized"; break;
-      case kLoopInvariantMoved : name = "LoopInvariantMoved"; break;
-      case kSelectGenerated : name = "SelectGenerated"; break;
-      case kRemovedInstanceOf: name = "RemovedInstanceOf"; break;
-      case kInlinedInvokeVirtualOrInterface: name = "InlinedInvokeVirtualOrInterface"; break;
-      case kImplicitNullCheckGenerated: name = "ImplicitNullCheckGenerated"; break;
-      case kExplicitNullCheckGenerated: name = "ExplicitNullCheckGenerated"; break;
+  int32_t GetStat(MethodCompilationStat compilation_stat) const {
+    DCHECK(compilation_stat < kLastStat);
+    return compile_stats_[compilation_stat];
+  }
 
-      case kLastStat:
-        LOG(FATAL) << "invalid stat "
-            << static_cast<std::underlying_type<MethodCompilationStat>::type>(stat);
-        UNREACHABLE();
+ private:
+  std::string PrintMethodCompilationStat(int stat) const {
+    switch (stat) {
+      case kAttemptCompilation : return "kAttemptCompilation";
+      case kCompiledBaseline : return "kCompiledBaseline";
+      case kCompiledOptimized : return "kCompiledOptimized";
+      case kCompiledQuick : return "kCompiledQuick";
+      case kInlinedInvoke : return "kInlinedInvoke";
+      case kInstructionSimplifications: return "kInstructionSimplifications";
+      case kNotCompiledBranchOutsideMethodCode: return "kNotCompiledBranchOutsideMethodCode";
+      case kNotCompiledCannotBuildSSA : return "kNotCompiledCannotBuildSSA";
+      case kNotCompiledCantAccesType : return "kNotCompiledCantAccesType";
+      case kNotCompiledClassNotVerified : return "kNotCompiledClassNotVerified";
+      case kNotCompiledHugeMethod : return "kNotCompiledHugeMethod";
+      case kNotCompiledLargeMethodNoBranches : return "kNotCompiledLargeMethodNoBranches";
+      case kNotCompiledMalformedOpcode : return "kNotCompiledMalformedOpcode";
+      case kNotCompiledNoCodegen : return "kNotCompiledNoCodegen";
+      case kNotCompiledNonSequentialRegPair : return "kNotCompiledNonSequentialRegPair";
+      case kNotCompiledPathological : return "kNotCompiledPathological";
+      case kNotCompiledSpaceFilter : return "kNotCompiledSpaceFilter";
+      case kNotCompiledUnhandledInstruction : return "kNotCompiledUnhandledInstruction";
+      case kNotCompiledUnresolvedField : return "kNotCompiledUnresolvedField";
+      case kNotCompiledUnresolvedMethod : return "kNotCompiledUnresolvedMethod";
+      case kNotCompiledUnsupportedIsa : return "kNotCompiledUnsupportedIsa";
+      case kNotCompiledVerifyAtRuntime : return "kNotCompiledVerifyAtRuntime";
+      case kNotOptimizedDisabled : return "kNotOptimizedDisabled";
+      case kNotOptimizedRegisterAllocator : return "kNotOptimizedRegisterAllocator";
+      case kNotOptimizedTryCatch : return "kNotOptimizedTryCatch";
+      case kRemovedCheckedCast: return "kRemovedCheckedCast";
+      case kRemovedDeadInstruction: return "kRemovedDeadInstruction";
+      case kRemovedNullCheck: return "kRemovedNullCheck";
+      case kConstantFolding: return "kConstantFolding";
+      case kBooleanSimplifier: return "kBooleanSimplifier";
+      case kReferenceTypePropagation: return "kReferenceTypePropagation";
+      case kIntrinsicsRecognizer: return "kIntrinsicsRecognizer";
+      case kLICM: return "kLICM";
+      case kIntelLoopPeeled: return "kIntelLoopPeeled";
+      case kIntelCCS: return "kIntelCCS";
+      case kIntelBIVFound: return "kIntelBIVFound";
+      case kIntelRemoveSuspendCheck: return "kIntelRemoveSuspendCheck";
+      case kIntelRemoveUnusedLoops: return "kIntelRemoveUnusedLoops";
+      case kIntelRemoveTrivialLoops: return "kIntelRemoveTrivialLoops";
+      case kIntelNonTemporalMove: return "kIntelNonTemporalMove";
+      case kIntelFormBottomLoop: return "kIntelFormBottomLoop";
+      case kIntelLHSS: return "kIntelLHSS";
+      case kIntelStoreSink: return "kIntelStoreSink";
+      case kIntelSelect: return "kIntelSelect";
+      case kIntelValuePropagationThroughHeap: return "kIntelValuePropagationThroughHeap";
+      case kIntelPureDirectCallDeleted: return "kIntelPureDirectCallDeleted";
+      case kIntelPureStaticCallDeleted: return "kIntelPureStaticCallDeleted";
+      case kIntelUselessNullCheckDeleted: return "kIntelUselessNullCheckDeleted";
+      case kIntelLoopFullyUnrolled: return "kIntelLoopFullyUnrolled";
+      default: LOG(FATAL) << "invalid stat";
     }
-    return "OptStat#" + name;
+    return "";
   }
 
   AtomicInteger compile_stats_[kLastStat];

@@ -12,20 +12,20 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Modified by Intel Corporation
+ *
  */
 
 #include "assembler_x86.h"
 
-#include "base/arena_allocator.h"
 #include "base/stl_util.h"
 #include "utils/assembler_test.h"
 
 namespace art {
 
 TEST(AssemblerX86, CreateBuffer) {
-  ArenaPool pool;
-  ArenaAllocator arena(&pool);
-  AssemblerBuffer buffer(&arena);
+  AssemblerBuffer buffer;
   AssemblerBuffer::EnsureCapacity ensured(&buffer);
   buffer.Emit<uint8_t>(0x42);
   ASSERT_EQ(static_cast<size_t>(1), buffer.Size());
@@ -35,10 +35,6 @@ TEST(AssemblerX86, CreateBuffer) {
 
 class AssemblerX86Test : public AssemblerTest<x86::X86Assembler, x86::Register,
                                               x86::XmmRegister, x86::Immediate> {
- public:
-  typedef AssemblerTest<x86::X86Assembler, x86::Register,
-                         x86::XmmRegister, x86::Immediate> Base;
-
  protected:
   std::string GetArchitectureString() OVERRIDE {
     return "x86";
@@ -110,16 +106,6 @@ TEST_F(AssemblerX86Test, Movl) {
   GetAssembler()->movl(x86::EAX, x86::EBX);
   const char* expected = "mov %ebx, %eax\n";
   DriverStr(expected, "movl");
-}
-
-TEST_F(AssemblerX86Test, Movntl) {
-  GetAssembler()->movntl(x86::Address(x86::EDI, x86::EBX, x86::TIMES_4, 12), x86::EAX);
-  GetAssembler()->movntl(x86::Address(x86::EDI, 0), x86::EAX);
-  const char* expected =
-    "movntil %EAX, 0xc(%EDI,%EBX,4)\n"
-    "movntil %EAX, (%EDI)\n";
-
-  DriverStr(expected, "movntl");
 }
 
 TEST_F(AssemblerX86Test, psrlq) {
@@ -207,148 +193,77 @@ TEST_F(AssemblerX86Test, FPUIntegerStore) {
   DriverStr(expected, "FPUIntegerStore");
 }
 
-TEST_F(AssemblerX86Test, Repnescasw) {
-  GetAssembler()->repne_scasw();
-  const char* expected = "repne scasw\n";
-  DriverStr(expected, "Repnescasw");
-}
-
-TEST_F(AssemblerX86Test, Repecmpsw) {
-  GetAssembler()->repe_cmpsw();
-  const char* expected = "repe cmpsw\n";
-  DriverStr(expected, "Repecmpsw");
-}
-
-TEST_F(AssemblerX86Test, Repecmpsl) {
-  GetAssembler()->repe_cmpsl();
-  const char* expected = "repe cmpsl\n";
-  DriverStr(expected, "Repecmpsl");
-}
-
-TEST_F(AssemblerX86Test, RepneScasw) {
-  GetAssembler()->repne_scasw();
-  const char* expected = "repne scasw\n";
-  DriverStr(expected, "repne_scasw");
-}
-
-TEST_F(AssemblerX86Test, RepMovsw) {
-  GetAssembler()->rep_movsw();
-  const char* expected = "rep movsw\n";
-  DriverStr(expected, "rep_movsw");
-}
-
-TEST_F(AssemblerX86Test, Bsfl) {
-  DriverStr(RepeatRR(&x86::X86Assembler::bsfl, "bsfl %{reg2}, %{reg1}"), "bsfl");
-}
-
-TEST_F(AssemblerX86Test, BsflAddress) {
-  GetAssembler()->bsfl(x86::Register(x86::EDI), x86::Address(
-      x86::Register(x86::EDI), x86::Register(x86::EBX), x86::TIMES_4, 12));
-  const char* expected =
-    "bsfl 0xc(%EDI,%EBX,4), %EDI\n";
-
-  DriverStr(expected, "bsfl_address");
-}
-
-TEST_F(AssemblerX86Test, Bsrl) {
-  DriverStr(RepeatRR(&x86::X86Assembler::bsrl, "bsrl %{reg2}, %{reg1}"), "bsrl");
-}
-
-TEST_F(AssemblerX86Test, BsrlAddress) {
-  GetAssembler()->bsrl(x86::Register(x86::EDI), x86::Address(
-      x86::Register(x86::EDI), x86::Register(x86::EBX), x86::TIMES_4, 12));
-  const char* expected =
-    "bsrl 0xc(%EDI,%EBX,4), %EDI\n";
-
-  DriverStr(expected, "bsrl_address");
-}
-
-TEST_F(AssemblerX86Test, Popcntl) {
-  DriverStr(RepeatRR(&x86::X86Assembler::popcntl, "popcntl %{reg2}, %{reg1}"), "popcntl");
-}
-
-TEST_F(AssemblerX86Test, PopcntlAddress) {
-  GetAssembler()->popcntl(x86::Register(x86::EDI), x86::Address(
-      x86::Register(x86::EDI), x86::Register(x86::EBX), x86::TIMES_4, 12));
-  const char* expected =
-    "popcntl 0xc(%EDI,%EBX,4), %EDI\n";
-
-  DriverStr(expected, "popcntl_address");
-}
-
-// Rorl only allows CL as the shift count.
-std::string rorl_fn(AssemblerX86Test::Base* assembler_test, x86::X86Assembler* assembler) {
-  std::ostringstream str;
-
-  std::vector<x86::Register*> registers = assembler_test->GetRegisters();
-
-  x86::Register shifter(x86::ECX);
-  for (auto reg : registers) {
-    assembler->rorl(*reg, shifter);
-    str << "rorl %cl, %" << assembler_test->GetRegisterName(*reg) << "\n";
-  }
-
-  return str.str();
-}
-
-TEST_F(AssemblerX86Test, RorlReg) {
-  DriverFn(&rorl_fn, "rorl");
-}
-
-TEST_F(AssemblerX86Test, RorlImm) {
-  DriverStr(RepeatRI(&x86::X86Assembler::rorl, 1U, "rorl ${imm}, %{reg}"), "rorli");
-}
-
-// Roll only allows CL as the shift count.
-std::string roll_fn(AssemblerX86Test::Base* assembler_test, x86::X86Assembler* assembler) {
-  std::ostringstream str;
-
-  std::vector<x86::Register*> registers = assembler_test->GetRegisters();
-
-  x86::Register shifter(x86::ECX);
-  for (auto reg : registers) {
-    assembler->roll(*reg, shifter);
-    str << "roll %cl, %" << assembler_test->GetRegisterName(*reg) << "\n";
-  }
-
-  return str.str();
-}
-
-TEST_F(AssemblerX86Test, RollReg) {
-  DriverFn(&roll_fn, "roll");
-}
-
-TEST_F(AssemblerX86Test, RollImm) {
-  DriverStr(RepeatRI(&x86::X86Assembler::roll, 1U, "roll ${imm}, %{reg}"), "rolli");
-}
-
-TEST_F(AssemblerX86Test, UComissAddr) {
-  GetAssembler()->ucomiss(x86::XmmRegister(x86::XMM0), x86::Address(x86::EAX, 0));
-  const char* expected = "ucomiss 0(%EAX), %xmm0\n";
-  DriverStr(expected, "ucomiss");
-}
-
-TEST_F(AssemblerX86Test, UComisdAddr) {
-  GetAssembler()->ucomisd(x86::XmmRegister(x86::XMM0), x86::Address(x86::EAX, 0));
-  const char* expected = "ucomisd 0(%EAX), %xmm0\n";
-  DriverStr(expected, "ucomisd");
+TEST_F(AssemblerX86Test, AddlAddrImm) {
+  GetAssembler()->addl(x86::Address(x86::EAX, 0), x86::Immediate(100));
+  GetAssembler()->addl(x86::Address(x86::EDI, 0), x86::Immediate(101));
+  const char* expected = "addl $100, 0(%eax)\n"
+                         "addl $101, 0(%edi)\n";
+  DriverStr(expected, "addl_addr_imm");
 }
 
 
-TEST_F(AssemblerX86Test, CmovlAddress) {
-  GetAssembler()->cmovl(x86::kEqual, x86::Register(x86::EAX), x86::Address(
-      x86::Register(x86::EDI), x86::Register(x86::EBX), x86::TIMES_4, 12));
-  GetAssembler()->cmovl(x86::kNotEqual, x86::Register(x86::EDI), x86::Address(
-      x86::Register(x86::ESI), x86::Register(x86::EBX), x86::TIMES_4, 12));
-  GetAssembler()->cmovl(x86::kEqual, x86::Register(x86::EDI), x86::Address(
-      x86::Register(x86::EDI), x86::Register(x86::EAX), x86::TIMES_4, 12));
-  const char* expected =
-    "cmovzl 0xc(%EDI,%EBX,4), %eax\n"
-    "cmovnzl 0xc(%ESI,%EBX,4), %edi\n"
-    "cmovzl 0xc(%EDI,%EAX,4), %edi\n";
-
-  DriverStr(expected, "cmovl_address");
+TEST_F(AssemblerX86Test, AdclAddrImm) {
+  GetAssembler()->adcl(x86::Address(x86::EAX, 0), x86::Immediate(100));
+  GetAssembler()->adcl(x86::Address(x86::EDI, 0), x86::Immediate(101));
+  const char* expected = "adcl $100, 0(%eax)\n"
+                         "adcl $101, 0(%edi)\n";
+  DriverStr(expected, "adcl_addr_imm");
 }
+
+
+TEST_F(AssemblerX86Test, SublAddrImm) {
+  GetAssembler()->subl(x86::Address(x86::EAX, 0), x86::Immediate(100));
+  GetAssembler()->subl(x86::Address(x86::EDI, 0), x86::Immediate(101));
+  const char* expected = "subl $100, 0(%eax)\n"
+                         "subl $101, 0(%edi)\n";
+  DriverStr(expected, "subl_addr_imm");
+}
+
+
+TEST_F(AssemblerX86Test, SbblAddrImm) {
+  GetAssembler()->sbbl(x86::Address(x86::EAX, 0), x86::Immediate(100));
+  GetAssembler()->sbbl(x86::Address(x86::EDI, 0), x86::Immediate(101));
+  const char* expected = "sbbl $100, 0(%eax)\n"
+                         "sbbl $101, 0(%edi)\n";
+  DriverStr(expected, "sbbl_addr_imm");
+}
+
+
+TEST_F(AssemblerX86Test, AddlAddrReg) {
+  GetAssembler()->addl(x86::Address(x86::EAX, 0), x86::EDI);
+  GetAssembler()->addl(x86::Address(x86::EDI, 0), x86::EDI);
+  const char* expected = "addl %edi, 0(%eax)\n"
+                         "addl %edi, 0(%edi)\n";
+  DriverStr(expected, "addl_addr_reg");
+}
+
+
+TEST_F(AssemblerX86Test, AdclAddrReg) {
+  GetAssembler()->adcl(x86::Address(x86::EAX, 0), x86::EDI);
+  GetAssembler()->adcl(x86::Address(x86::EDI, 0), x86::EDI);
+  const char* expected = "adcl %edi, 0(%eax)\n"
+                         "adcl %edi, 0(%edi)\n";
+  DriverStr(expected, "adcl_addr_reg");
+}
+
+
+TEST_F(AssemblerX86Test, SublAddrReg) {
+  GetAssembler()->subl(x86::Address(x86::EAX, 0), x86::EDI);
+  GetAssembler()->subl(x86::Address(x86::EDI, 0), x86::EDI);
+  const char* expected = "subl %edi, 0(%eax)\n"
+                         "subl %edi, 0(%edi)\n";
+  DriverStr(expected, "subl_addr_reg");
+}
+
+
+TEST_F(AssemblerX86Test, SbblAddrReg) {
+  GetAssembler()->sbbl(x86::Address(x86::EAX, 0), x86::EDI);
+  GetAssembler()->sbbl(x86::Address(x86::EDI, 0), x86::EDI);
+  const char* expected = "sbbl %edi, 0(%eax)\n"
+                         "sbbl %edi, 0(%edi)\n";
+  DriverStr(expected, "sbbl_addr_reg");
+}
+
 
 /////////////////
 // Near labels //

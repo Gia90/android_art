@@ -25,16 +25,13 @@
 #include "base/macros.h"
 #include "base/mutex.h"
 #include "os.h"
-#include "utils/array_ref.h"
 
 namespace art {
 
+class CompilerDriver;
+class DexFile;
 class ElfFile;
-class OutputStream;
-
-namespace debug {
-struct MethodDebugInfo;
-}  // namespace debug
+class OatWriter;
 
 class ElfWriter {
  public:
@@ -49,32 +46,21 @@ class ElfWriter {
 
   static bool Fixup(File* file, uintptr_t oat_data_begin);
 
+ protected:
+  ElfWriter(const CompilerDriver& driver, File* elf_file)
+    : compiler_driver_(&driver), elf_file_(elf_file) {
+  }
+
   virtual ~ElfWriter() {}
 
-  virtual void Start() = 0;
-  virtual void SetLoadedSectionSizes(size_t rodata_size, size_t text_size, size_t xposed_size, size_t bss_size) = 0;
-  virtual void PrepareDebugInfo(const ArrayRef<const debug::MethodDebugInfo>& method_infos) = 0;
-  virtual OutputStream* StartRoData() = 0;
-  virtual void EndRoData(OutputStream* rodata) = 0;
-  virtual OutputStream* StartText() = 0;
-  virtual void EndText(OutputStream* text) = 0;
-  virtual OutputStream* StartXposed() = 0;
-  virtual void EndXposed(OutputStream* xposed) = 0;
-  virtual void WriteDynamicSection() = 0;
-  virtual void WriteDebugInfo(const ArrayRef<const debug::MethodDebugInfo>& method_infos) = 0;
-  virtual void WritePatchLocations(const ArrayRef<const uintptr_t>& patch_locations) = 0;
-  virtual bool End() = 0;
+  virtual bool Write(OatWriter* oat_writer,
+                     const std::vector<const DexFile*>& dex_files,
+                     const std::string& android_root,
+                     bool is_host)
+      SHARED_LOCKS_REQUIRED(Locks::mutator_lock_) = 0;
 
-  // Get the ELF writer's stream. This stream can be used for writing data directly
-  // to a section after the section has been finished. When that's done, the user
-  // should Seek() back to the position where the stream was before this operation.
-  virtual OutputStream* GetStream() = 0;
-
-  // Get the size that the loaded ELF file will occupy in memory.
-  virtual size_t GetLoadedSize() = 0;
-
- protected:
-  ElfWriter() = default;
+  const CompilerDriver* const compiler_driver_;
+  File* const elf_file_;
 };
 
 }  // namespace art

@@ -19,10 +19,9 @@
 
 #include <stdint.h>
 
-#include "base/arena_object.h"
 #include "dex_file.h"
-#include "handle.h"
 #include "jni.h"
+#include "base/arena_object.h"
 
 namespace art {
 namespace mirror {
@@ -30,19 +29,21 @@ class ClassLoader;
 class DexCache;
 }  // namespace mirror
 class ClassLinker;
+struct CompilationUnit;
 class VerifiedMethod;
 
 class DexCompilationUnit : public DeletableArenaObject<kArenaAllocMisc> {
  public:
-  DexCompilationUnit(jobject class_loader,
-                     ClassLinker* class_linker,
-                     const DexFile& dex_file,
-                     const DexFile::CodeItem* code_item,
-                     uint16_t class_def_idx,
-                     uint32_t method_idx,
-                     uint32_t access_flags,
-                     const VerifiedMethod* verified_method,
-                     Handle<mirror::DexCache> dex_cache);
+  explicit DexCompilationUnit(CompilationUnit* cu);
+
+  DexCompilationUnit(CompilationUnit* cu, jobject class_loader, ClassLinker* class_linker,
+                     const DexFile& dex_file, const DexFile::CodeItem* code_item,
+                     uint16_t class_def_idx, uint32_t method_idx, uint32_t access_flags,
+                     const VerifiedMethod* verified_method);
+
+  CompilationUnit* GetCompilationUnit() const {
+    return cu_;
+  }
 
   jobject GetClassLoader() const {
     return class_loader_;
@@ -108,11 +109,9 @@ class DexCompilationUnit : public DeletableArenaObject<kArenaAllocMisc> {
 
   const std::string& GetSymbol();
 
-  Handle<mirror::DexCache> GetDexCache() const {
-    return dex_cache_;
-  }
-
  private:
+  CompilationUnit* const cu_;
+
   const jobject class_loader_;
 
   ClassLinker* const class_linker_;
@@ -124,8 +123,6 @@ class DexCompilationUnit : public DeletableArenaObject<kArenaAllocMisc> {
   const uint32_t dex_method_idx_;
   const uint32_t access_flags_;
   const VerifiedMethod* verified_method_;
-
-  Handle<mirror::DexCache> dex_cache_;
 
   std::string symbol_;
 };

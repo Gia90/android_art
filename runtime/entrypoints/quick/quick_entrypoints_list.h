@@ -12,6 +12,9 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Modified by Intel Corporation
+ *
  */
 
 #ifndef ART_RUNTIME_ENTRYPOINTS_QUICK_QUICK_ENTRYPOINTS_LIST_H_
@@ -119,7 +122,7 @@
   V(ShrLong, uint64_t, uint64_t, uint32_t) \
   V(UshrLong, uint64_t, uint64_t, uint32_t) \
 \
-  V(IndexOf, int32_t, void*, uint32_t, uint32_t) \
+  V(IndexOf, int32_t, void*, uint32_t, uint32_t, uint32_t) \
   V(StringCompareTo, int32_t, void*, void*) \
   V(Memcpy, void*, void*, const void*, size_t) \
 \
@@ -163,9 +166,8 @@
   V(NewStringFromStringBuilder, void) \
 \
   V(ReadBarrierJni, void, mirror::CompressedReference<mirror::Object>*, Thread*) \
-  V(ReadBarrierMark, mirror::Object*, mirror::Object*) \
-  V(ReadBarrierSlow, mirror::Object*, mirror::Object*, mirror::Object*, uint32_t) \
-  V(ReadBarrierForRootSlow, mirror::Object*, GcRoot<mirror::Object>*)
+  V(JniMethodStartFromCode, void, Thread*) \
+  V(JniMethodStartSynchronizedFromCode, void, jobject, Thread*)
 
 #endif  // ART_RUNTIME_ENTRYPOINTS_QUICK_QUICK_ENTRYPOINTS_LIST_H_
 #undef ART_RUNTIME_ENTRYPOINTS_QUICK_QUICK_ENTRYPOINTS_LIST_H_   // #define is only for lint.

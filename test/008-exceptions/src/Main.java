@@ -14,38 +14,20 @@
  * limitations under the License.
  */
 
-// An error class.
+// An exception that doesn't have a <init>(String) method.
 class BadError extends Error {
-    public BadError(String s) {
-        super("This is bad by convention: " + s);
+    public BadError() {
+        super("This is bad by convention");
     }
 }
 
-// A class that throws BadError during static initialization.
+// A class that throws BadException during static initialization.
 class BadInit {
     static int dummy;
     static {
         System.out.println("Static Init");
         if (true) {
-            throw new BadError("BadInit");
-        }
-    }
-}
-
-// An error that doesn't have a <init>(String) method.
-class BadErrorNoStringInit extends Error {
-    public BadErrorNoStringInit() {
-        super("This is bad by convention");
-    }
-}
-
-// A class that throws BadErrorNoStringInit during static initialization.
-class BadInitNoStringInit {
-    static int dummy;
-    static {
-        System.out.println("Static BadInitNoStringInit");
-        if (true) {
-            throw new BadErrorNoStringInit();
+            throw new BadError();
         }
     }
 }
@@ -60,13 +42,12 @@ public class Main {
         } catch (NullPointerException npe) {
             System.out.print("Got an NPE: ");
             System.out.println(npe.getMessage());
-            npe.printStackTrace(System.out);
+            npe.printStackTrace();
         }
     }
     public static void main (String args[]) {
         exceptions_007();
         exceptionsRethrowClassInitFailure();
-        exceptionsRethrowClassInitFailureNoStringInit();
     }
 
     private static void catchAndRethrow() {
@@ -98,35 +79,11 @@ public class Main {
             try {
                 BadInit.dummy = 1;
                 throw new IllegalStateException("Should not reach here.");
-            } catch (NoClassDefFoundError e) {
+            } catch (BadError e) {
                 System.out.println(e);
-                System.out.println(e.getCause());
             }
         } catch (Exception error) {
-            error.printStackTrace(System.out);
-        }
-    }
-
-    private static void exceptionsRethrowClassInitFailureNoStringInit() {
-        try {
-            try {
-                BadInitNoStringInit.dummy = 1;
-                throw new IllegalStateException("Should not reach here.");
-            } catch (BadErrorNoStringInit e) {
-                System.out.println(e);
-            }
-
-            // Check if it works a second time.
-
-            try {
-                BadInitNoStringInit.dummy = 1;
-                throw new IllegalStateException("Should not reach here.");
-            } catch (NoClassDefFoundError e) {
-                System.out.println(e);
-                System.out.println(e.getCause());
-            }
-        } catch (Exception error) {
-            error.printStackTrace(System.out);
+            error.printStackTrace();
         }
     }
 }

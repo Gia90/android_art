@@ -18,8 +18,6 @@
 #define ART_COMPILER_JNI_QUICK_CALLING_CONVENTION_H_
 
 #include <vector>
-
-#include "base/arena_object.h"
 #include "handle_scope.h"
 #include "primitive.h"
 #include "thread.h"
@@ -28,7 +26,7 @@
 namespace art {
 
 // Top-level abstraction for different calling conventions.
-class CallingConvention : public DeletableArenaObject<kArenaAllocCallingConvention> {
+class CallingConvention {
  public:
   bool IsReturnAReference() const { return shorty_[0] == 'L'; }
 
@@ -223,11 +221,9 @@ class CallingConvention : public DeletableArenaObject<kArenaAllocCallingConventi
 // | { Method* }             | <-- SP
 class ManagedRuntimeCallingConvention : public CallingConvention {
  public:
-  static std::unique_ptr<ManagedRuntimeCallingConvention> Create(ArenaAllocator* arena,
-                                                                 bool is_static,
-                                                                 bool is_synchronized,
-                                                                 const char* shorty,
-                                                                 InstructionSet instruction_set);
+  static ManagedRuntimeCallingConvention* Create(bool is_static, bool is_synchronized,
+                                                 const char* shorty,
+                                                 InstructionSet instruction_set);
 
   // Register that holds the incoming method argument
   virtual ManagedRegister MethodRegister() = 0;
@@ -253,9 +249,7 @@ class ManagedRuntimeCallingConvention : public CallingConvention {
   virtual const ManagedRegisterEntrySpills& EntrySpills() = 0;
 
  protected:
-  ManagedRuntimeCallingConvention(bool is_static,
-                                  bool is_synchronized,
-                                  const char* shorty,
+  ManagedRuntimeCallingConvention(bool is_static, bool is_synchronized, const char* shorty,
                                   size_t frame_pointer_size)
       : CallingConvention(is_static, is_synchronized, shorty, frame_pointer_size) {}
 };
@@ -276,11 +270,8 @@ class ManagedRuntimeCallingConvention : public CallingConvention {
 // callee saves for frames above this one.
 class JniCallingConvention : public CallingConvention {
  public:
-  static std::unique_ptr<JniCallingConvention> Create(ArenaAllocator* arena,
-                                                      bool is_static,
-                                                      bool is_synchronized,
-                                                      const char* shorty,
-                                                      InstructionSet instruction_set);
+  static JniCallingConvention* Create(bool is_static, bool is_synchronized, const char* shorty,
+                                      InstructionSet instruction_set);
 
   // Size of frame excluding space for outgoing args (its assumed Method* is
   // always at the bottom of a frame, but this doesn't work for outgoing
@@ -357,8 +348,8 @@ class JniCallingConvention : public CallingConvention {
     kObjectOrClass = 1
   };
 
-  JniCallingConvention(bool is_static, bool is_synchronized, const char* shorty,
-                       size_t frame_pointer_size)
+  explicit JniCallingConvention(bool is_static, bool is_synchronized, const char* shorty,
+                                size_t frame_pointer_size)
       : CallingConvention(is_static, is_synchronized, shorty, frame_pointer_size) {}
 
   // Number of stack slots for outgoing arguments, above which the handle scope is

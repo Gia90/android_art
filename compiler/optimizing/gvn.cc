@@ -12,17 +12,22 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Modified by Intel Corporation
+ *
  */
 
 #include "gvn.h"
-
-#include "base/arena_bit_vector.h"
-#include "base/arena_containers.h"
-#include "base/bit_vector-inl.h"
 #include "side_effects_analysis.h"
 #include "utils.h"
 
+#include "utils/arena_bit_vector.h"
+#include "base/bit_vector-inl.h"
+#include "ext_alias.h"
+
 namespace art {
+
+static constexpr int32_t kMaxGVNAliasSetters = 20;
 
 /**
  * A ValueSet holds instructions that can replace other instructions. It is updated
@@ -33,15 +38,15 @@ namespace art {
  * if there is one in the set. In GVN, we would say those instructions have the
  * same "number".
  */
-class ValueSet : public ArenaObject<kArenaAllocGvn> {
+class ValueSet : public ArenaObject<kArenaAllocMisc> {
  public:
   // Constructs an empty ValueSet which owns all its buckets.
   explicit ValueSet(ArenaAllocator* allocator)
       : allocator_(allocator),
         num_buckets_(kMinimumNumberOfBuckets),
-        buckets_(allocator->AllocArray<Node*>(num_buckets_, kArenaAllocGvn)),
-        buckets_owned_(allocator, num_buckets_, false, kArenaAllocGvn),
-        num_entries_(0u) {
+        buckets_(allocator->AllocArray<Node*>(num_buckets_)),
+        buckets_owned_(allocator, num_buckets_, false),
+        num_entries_(0) {
     // ArenaAllocator returns zeroed memory, so no need to set buckets to null.
     DCHECK(IsPowerOfTwo(num_buckets_));
     buckets_owned_.SetInitialBits(num_buckets_);
@@ -49,35 +54,29 @@ class ValueSet : public ArenaObject<kArenaAllocGvn> {
 
   // Copy constructor. Depending on the load factor, it will either make a deep
   // copy (all buckets owned) or a shallow one (buckets pointing to the parent).
-  ValueSet(ArenaAllocator* allocator, const ValueSet& other)
+  ValueSet(ArenaAllocator* allocator, const ValueSet& to_copy)
       : allocator_(allocator),
-        num_buckets_(other.IdealBucketCount()),
-        buckets_(allocator->AllocArray<Node*>(num_buckets_, kArenaAllocGvn)),
-        buckets_owned_(allocator, num_buckets_, false, kArenaAllocGvn),
-        num_entries_(0u) {
+        num_buckets_(to_copy.IdealBucketCount()),
+        buckets_(allocator->AllocArray<Node*>(num_buckets_)),
+        buckets_owned_(allocator, num_buckets_, false),
+        num_entries_(to_copy.num_entries_) {
     // ArenaAllocator returns zeroed memory, so entries of buckets_ and
     // buckets_owned_ are initialized to null and false, respectively.
     DCHECK(IsPowerOfTwo(num_buckets_));
-    PopulateFromInternal(other, /* is_dirty */ false);
-  }
-
-  // Erases all values in this set and populates it with values from `other`.
-  void PopulateFrom(const ValueSet& other) {
-    if (this == &other) {
-      return;
-    }
-    PopulateFromInternal(other, /* is_dirty */ true);
-  }
-
-  // Returns true if `this` has enough buckets so that if `other` is copied into
-  // it, the load factor will not cross the upper threshold.
-  // If `exact_match` is set, true is returned only if `this` has the ideal
-  // number of buckets. Larger number of buckets is allowed otherwise.
-  bool CanHoldCopyOf(const ValueSet& other, bool exact_match) {
-    if (exact_match) {
-      return other.IdealBucketCount() == num_buckets_;
+    if (num_buckets_ == to_copy.num_buckets_) {
+      // Hash table remains the same size. We copy the bucket pointers and leave
+      // all buckets_owned_ bits false.
+      memcpy(buckets_, to_copy.buckets_, num_buckets_ * sizeof(Node*));
     } else {
-      return other.IdealBucketCount() <= num_buckets_;
+      // Hash table size changes. We copy and rehash all entries, and set all
+      // buckets_owned_ bits to true.
+      for (size_t i = 0; i < to_copy.num_buckets_; ++i) {
+        for (Node* node = to_copy.buckets_[i]; node != nullptr; node = node->GetNext()) {
+          size_t new_index = BucketIndex(node->GetHashCode());
+          buckets_[new_index] = node->Dup(allocator_, buckets_[new_index]);
+        }
+      }
+      buckets_owned_.SetInitialBits(num_buckets_);
     }
   }
 
@@ -125,18 +124,59 @@ class ValueSet : public ArenaObject<kArenaAllocGvn> {
   }
 
   // Removes all instructions in the set affected by the given side effects.
-  void Kill(SideEffects side_effects) {
-    DeleteAllImpureWhich([side_effects](Node* node) {
-      return node->GetInstruction()->GetSideEffects().MayDependOn(side_effects);
+  void Kill(HInstruction* insn, SideEffects side_effects, AliasCheck& alias) {
+    DeleteAllImpureWhich([alias, insn, side_effects] (Node* node) mutable {
+      bool depends_on =
+        node->GetInstruction()->GetSideEffects().DependsOn(side_effects);
+      if (depends_on && insn != nullptr) {
+        // What does aliasing think about this?
+        if (alias.Alias(insn, node->GetInstruction()) == AliasCheck::kNoAlias) {
+          depends_on = false;
+        }
+      }
+      return depends_on;
     });
   }
 
-  void Clear() {
-    num_entries_ = 0;
-    for (size_t i = 0; i < num_buckets_; ++i) {
-      buckets_[i] = nullptr;
+  void KillLoop(HBasicBlock *block, SideEffects side_effects, AliasCheck& alias) {
+    // Walk through the loop, collecting instructions that change something.
+    std::vector<HInstruction*> setters;
+    for (HBlocksInLoopIterator it_loop(*block->GetLoopInformation());
+                               !it_loop.Done(); it_loop.Advance()) {
+      HBasicBlock* loop_block = it_loop.Current();
+      for (HInstructionIterator inst_it(loop_block->GetInstructions()); !inst_it.Done(); inst_it.Advance()) {
+        HInstruction* instruction = inst_it.Current();
+        if (instruction->GetSideEffects().HasSideEffects()) {
+          setters.push_back(instruction);
+        }
+      }
     }
-    buckets_owned_.SetInitialBits(num_buckets_);
+
+    // Do we have too many instructions to look through?
+    if (setters.size() > kMaxGVNAliasSetters) {
+      // We don't want to.
+      Kill(nullptr, side_effects, alias);
+      return;
+    }
+
+    // Remove only those elements which are really killed by the loop.
+    DeleteAllImpureWhich([alias, setters, side_effects] (Node* node) mutable {
+      HInstruction* current_insn = node->GetInstruction();
+
+      if (!current_insn->GetSideEffects().DependsOn(side_effects)) {
+        // Nothing to worry about.
+        return false;
+      }
+
+      // Walk through the setters, looking for a kill.
+      for (HInstruction* insn : setters) {
+        // What does aliasing think about this?  Assume it is okay.
+        if (alias.Alias(insn, current_insn) != AliasCheck::kNoAlias) {
+          return true;
+        }
+      }
+      return false;
+    });
   }
 
   // Updates this set by intersecting with instructions in a predecessor's set.
@@ -154,51 +194,28 @@ class ValueSet : public ArenaObject<kArenaAllocGvn> {
     }
   }
 
+  void DumpBuckets(std::ostream& os) {
+    bool first = true;
+    for (size_t i = 0; i < num_buckets_; ++i) {
+      if (buckets_[i] == nullptr)
+        continue;
+      if (first) {
+        os << "Dump All Buckets\n";
+        first = false;
+      }
+      os << "Bucket " << i << '\n';
+      for (Node* node = buckets_[i]; node != nullptr; node = node->GetNext()) {
+        os << "  " << node->GetInstruction() << '\n';
+      }
+      os << "End of buckets\n";
+    }
+  }
+
   bool IsEmpty() const { return num_entries_ == 0; }
   size_t GetNumberOfEntries() const { return num_entries_; }
 
  private:
-  // Copies all entries from `other` to `this`.
-  // If `is_dirty` is set to true, existing data will be wiped first. It is
-  // assumed that `buckets_` and `buckets_owned_` are zero-allocated otherwise.
-  void PopulateFromInternal(const ValueSet& other, bool is_dirty) {
-    DCHECK_NE(this, &other);
-    DCHECK_GE(num_buckets_, other.IdealBucketCount());
-
-    if (num_buckets_ == other.num_buckets_) {
-      // Hash table remains the same size. We copy the bucket pointers and leave
-      // all buckets_owned_ bits false.
-      if (is_dirty) {
-        buckets_owned_.ClearAllBits();
-      } else {
-        DCHECK_EQ(buckets_owned_.NumSetBits(), 0u);
-      }
-      memcpy(buckets_, other.buckets_, num_buckets_ * sizeof(Node*));
-    } else {
-      // Hash table size changes. We copy and rehash all entries, and set all
-      // buckets_owned_ bits to true.
-      if (is_dirty) {
-        memset(buckets_, 0, num_buckets_ * sizeof(Node*));
-      } else {
-        if (kIsDebugBuild) {
-          for (size_t i = 0; i < num_buckets_; ++i) {
-            DCHECK(buckets_[i] == nullptr) << i;
-          }
-        }
-      }
-      for (size_t i = 0; i < other.num_buckets_; ++i) {
-        for (Node* node = other.buckets_[i]; node != nullptr; node = node->GetNext()) {
-          size_t new_index = BucketIndex(node->GetHashCode());
-          buckets_[new_index] = node->Dup(allocator_, buckets_[new_index]);
-        }
-      }
-      buckets_owned_.SetInitialBits(num_buckets_);
-    }
-
-    num_entries_ = other.num_entries_;
-  }
-
-  class Node : public ArenaObject<kArenaAllocGvn> {
+  class Node : public ArenaObject<kArenaAllocMisc> {
    public:
     Node(HInstruction* instruction, size_t hash_code, Node* next)
         : instruction_(instruction), hash_code_(hash_code), next_(next) {}
@@ -243,6 +260,14 @@ class ValueSet : public ArenaObject<kArenaAllocGvn> {
     }
     buckets_owned_.SetBit(index);
     return clone_iterator;
+  }
+
+  void Clear() {
+    num_entries_ = 0;
+    for (size_t i = 0; i < num_buckets_; ++i) {
+      buckets_[i] = nullptr;
+    }
+    buckets_owned_.SetInitialBits(num_buckets_);
   }
 
   // Iterates over buckets with impure instructions (even indices) and deletes
@@ -307,14 +332,11 @@ class ValueSet : public ArenaObject<kArenaAllocGvn> {
     }
   }
 
-  // Generates a hash code for an instruction.
+  // Generates a hash code for an instruction. Pure instructions are put into
+  // odd buckets to speed up deletion.
   size_t HashCode(HInstruction* instruction) const {
     size_t hash_code = instruction->ComputeHashCode();
-    // Pure instructions are put into odd buckets to speed up deletion. Note that in the
-    // case of irreducible loops, we don't put pure instructions in odd buckets, as we
-    // need to delete them when entering the loop.
-    if (instruction->GetSideEffects().HasDependencies() ||
-        instruction->GetBlock()->GetGraph()->HasIrreducibleLoops()) {
+    if (instruction->GetSideEffects().HasDependencies()) {
       return (hash_code << 1) | 0;
     } else {
       return (hash_code << 1) | 1;
@@ -356,9 +378,7 @@ class GlobalValueNumberer : public ValueObject {
       : graph_(graph),
         allocator_(allocator),
         side_effects_(side_effects),
-        sets_(graph->GetBlocks().size(), nullptr, allocator->Adapter(kArenaAllocGvn)),
-        visited_blocks_(
-            allocator, graph->GetBlocks().size(), /* expandable */ false, kArenaAllocGvn) {}
+        sets_(allocator, graph->GetBlocks().Size(), nullptr) {}
 
   void Run();
 
@@ -371,43 +391,19 @@ class GlobalValueNumberer : public ValueObject {
   ArenaAllocator* const allocator_;
   const SideEffectsAnalysis& side_effects_;
 
-  ValueSet* FindSetFor(HBasicBlock* block) const {
-    ValueSet* result = sets_[block->GetBlockId()];
-    DCHECK(result != nullptr) << "Could not find set for block B" << block->GetBlockId();
-    return result;
-  }
-
-  void AbandonSetFor(HBasicBlock* block) {
-    DCHECK(sets_[block->GetBlockId()] != nullptr)
-        << "Block B" << block->GetBlockId() << " expected to have a set";
-    sets_[block->GetBlockId()] = nullptr;
-  }
-
-  // Returns false if the GlobalValueNumberer has already visited all blocks
-  // which may reference `block`.
-  bool WillBeReferencedAgain(HBasicBlock* block) const;
-
-  // Iterates over visited blocks and finds one which has a ValueSet such that:
-  // (a) it will not be referenced in the future, and
-  // (b) it can hold a copy of `reference_set` with a reasonable load factor.
-  HBasicBlock* FindVisitedBlockWithRecyclableSet(HBasicBlock* block,
-                                                 const ValueSet& reference_set) const;
-
   // ValueSet for blocks. Initially null, but for an individual block they
   // are allocated and populated by the dominator, and updated by all blocks
   // in the path from the dominator to the block.
-  ArenaVector<ValueSet*> sets_;
+  GrowableArray<ValueSet*> sets_;
 
-  // BitVector which serves as a fast-access map from block id to
-  // visited/unvisited boolean.
-  ArenaBitVector visited_blocks_;
+  AliasCheck alias_;
 
   DISALLOW_COPY_AND_ASSIGN(GlobalValueNumberer);
 };
 
 void GlobalValueNumberer::Run() {
   DCHECK(side_effects_.HasRun());
-  sets_[graph_->GetEntryBlock()->GetBlockId()] = new (allocator_) ValueSet(allocator_);
+  sets_.Put(graph_->GetEntryBlock()->GetBlockId(), new (allocator_) ValueSet(allocator_));
 
   // Use the reverse post order to ensure the non back-edge predecessors of a block are
   // visited before the block itself.
@@ -418,58 +414,30 @@ void GlobalValueNumberer::Run() {
 
 void GlobalValueNumberer::VisitBasicBlock(HBasicBlock* block) {
   ValueSet* set = nullptr;
-
-  const ArenaVector<HBasicBlock*>& predecessors = block->GetPredecessors();
-  if (predecessors.size() == 0 || predecessors[0]->IsEntryBlock()) {
+  const GrowableArray<HBasicBlock*>& predecessors = block->GetPredecessors();
+  if (predecessors.Size() == 0 || predecessors.Get(0)->IsEntryBlock()) {
     // The entry block should only accumulate constant instructions, and
     // the builder puts constants only in the entry block.
     // Therefore, there is no need to propagate the value set to the next block.
     set = new (allocator_) ValueSet(allocator_);
   } else {
     HBasicBlock* dominator = block->GetDominator();
-    ValueSet* dominator_set = FindSetFor(dominator);
-
-    if (dominator->GetSuccessors().size() == 1) {
-      // `block` is a direct successor of its dominator. No need to clone the
-      // dominator's set, `block` can take over its ownership including its buckets.
-      DCHECK_EQ(dominator->GetSingleSuccessor(), block);
-      AbandonSetFor(dominator);
+    ValueSet* dominator_set = sets_.Get(dominator->GetBlockId());
+    if (dominator->GetSuccessors().Size() == 1) {
+      DCHECK_EQ(dominator->GetSuccessors().Get(0), block);
       set = dominator_set;
     } else {
-      // Try to find a basic block which will never be referenced again and whose
-      // ValueSet can therefore be recycled. We will need to copy `dominator_set`
-      // into the recycled set, so we pass `dominator_set` as a reference for size.
-      HBasicBlock* recyclable = FindVisitedBlockWithRecyclableSet(block, *dominator_set);
-      if (recyclable == nullptr) {
-        // No block with a suitable ValueSet found. Allocate a new one and
-        // copy `dominator_set` into it.
-        set = new (allocator_) ValueSet(allocator_, *dominator_set);
-      } else {
-        // Block with a recyclable ValueSet found. Clone `dominator_set` into it.
-        set = FindSetFor(recyclable);
-        AbandonSetFor(recyclable);
-        set->PopulateFrom(*dominator_set);
-      }
+      // We have to copy if the dominator has other successors, or `block` is not a successor
+      // of the dominator.
+      set = new (allocator_) ValueSet(allocator_, *dominator_set);
     }
-
     if (!set->IsEmpty()) {
       if (block->IsLoopHeader()) {
-        if (block->GetLoopInformation()->ContainsIrreducibleLoop()) {
-          // To satisfy our linear scan algorithm, no instruction should flow in an irreducible
-          // loop header. We clear the set at entry of irreducible loops and any loop containing
-          // an irreducible loop, as in both cases, GVN can extend the liveness of an instruction
-          // across the irreducible loop.
-          // Note that, if we're not compiling OSR, we could still do GVN and introduce
-          // phis at irreducible loop headers. We decided it was not worth the complexity.
-          set->Clear();
-        } else {
-          DCHECK(!block->GetLoopInformation()->IsIrreducible());
-          DCHECK_EQ(block->GetDominator(), block->GetLoopInformation()->GetPreHeader());
-          set->Kill(side_effects_.GetLoopEffects(block));
-        }
-      } else if (predecessors.size() > 1) {
-        for (HBasicBlock* predecessor : predecessors) {
-          set->IntersectWith(FindSetFor(predecessor));
+        DCHECK_EQ(block->GetDominator(), block->GetLoopInformation()->GetPreHeader());
+        set->KillLoop(block, side_effects_.GetLoopEffects(block), alias_);
+      } else if (predecessors.Size() > 1) {
+        for (size_t i = 0, e = predecessors.Size(); i < e; ++i) {
+          set->IntersectWith(sets_.Get(predecessors.Get(i)->GetBlockId()));
           if (set->IsEmpty()) {
             break;
           }
@@ -478,14 +446,13 @@ void GlobalValueNumberer::VisitBasicBlock(HBasicBlock* block) {
     }
   }
 
-  sets_[block->GetBlockId()] = set;
+  sets_.Put(block->GetBlockId(), set);
 
   HInstruction* current = block->GetFirstInstruction();
   while (current != nullptr) {
+    set->Kill(current, current->GetSideEffects(), alias_);
     // Save the next instruction in case `current` is removed from the graph.
     HInstruction* next = current->GetNext();
-    // Do not kill the set with the side effects of the instruction just now: if
-    // the instruction is GVN'ed, we don't need to kill.
     if (current->CanBeMoved()) {
       if (current->IsBinaryOperation() && current->AsBinaryOperation()->IsCommutative()) {
         // For commutative ops, (x op y) will be treated the same as (y op x)
@@ -501,68 +468,11 @@ void GlobalValueNumberer::VisitBasicBlock(HBasicBlock* block) {
         current->ReplaceWith(existing);
         current->GetBlock()->RemoveInstruction(current);
       } else {
-        set->Kill(current->GetSideEffects());
         set->Add(current);
       }
-    } else {
-      set->Kill(current->GetSideEffects());
     }
     current = next;
   }
-
-  visited_blocks_.SetBit(block->GetBlockId());
-}
-
-bool GlobalValueNumberer::WillBeReferencedAgain(HBasicBlock* block) const {
-  DCHECK(visited_blocks_.IsBitSet(block->GetBlockId()));
-
-  for (auto dominated_block : block->GetDominatedBlocks()) {
-    if (!visited_blocks_.IsBitSet(dominated_block->GetBlockId())) {
-      return true;
-    }
-  }
-
-  for (auto successor : block->GetSuccessors()) {
-    if (!visited_blocks_.IsBitSet(successor->GetBlockId())) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-HBasicBlock* GlobalValueNumberer::FindVisitedBlockWithRecyclableSet(
-    HBasicBlock* block, const ValueSet& reference_set) const {
-  HBasicBlock* secondary_match = nullptr;
-
-  for (size_t block_id : visited_blocks_.Indexes()) {
-    ValueSet* current_set = sets_[block_id];
-    if (current_set == nullptr) {
-      // Set was already recycled.
-      continue;
-    }
-
-    HBasicBlock* current_block = block->GetGraph()->GetBlocks()[block_id];
-
-    // We test if `current_set` has enough buckets to store a copy of
-    // `reference_set` with a reasonable load factor. If we find a set whose
-    // number of buckets matches perfectly, we return right away. If we find one
-    // that is larger, we return it if no perfectly-matching set is found.
-    // Note that we defer testing WillBeReferencedAgain until all other criteria
-    // have been satisfied because it might be expensive.
-    if (current_set->CanHoldCopyOf(reference_set, /* exact_match */ true)) {
-      if (!WillBeReferencedAgain(current_block)) {
-        return current_block;
-      }
-    } else if (secondary_match == nullptr &&
-               current_set->CanHoldCopyOf(reference_set, /* exact_match */ false)) {
-      if (!WillBeReferencedAgain(current_block)) {
-        secondary_match = current_block;
-      }
-    }
-  }
-
-  return secondary_match;
 }
 
 void GVNOptimization::Run() {

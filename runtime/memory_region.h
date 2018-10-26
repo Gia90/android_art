@@ -133,12 +133,37 @@ class MemoryRegion FINAL : public ValueObject {
     return value;
   }
 
+  // Load 3 bits from the region starting at bit offset 'bit_offset'.
+  uint32_t Load3Bits(uintptr_t bit_offset) const {
+    uintptr_t bit_remainder = (bit_offset & (kBitsPerByte - 1));
+    uintptr_t byte_offset = (bit_offset >> kBitsPerByteLog2);
+
+    // Load the byte for the low/all bits.
+    uint8_t byte = *(ComputeInternalPointer<uint8_t>(byte_offset));
+
+    DCHECK_EQ(kBitsPerByte, 8U);
+    if (bit_remainder == 6) {
+      // 3 bits cross byte boundary: 2 bits from this byte and 1 from the next.
+      uint8_t byte2 = *ComputeInternalPointer<uint8_t>(byte_offset + 1);
+      return (byte & 0xC0) >> 6 | (byte2 & 0x01) << 2;
+    }
+
+    if (bit_remainder == 7) {
+      // 3 bits cross byte boundary: 1 bit from this byte and 2 from the next.
+      uint8_t byte2 = *ComputeInternalPointer<uint8_t>(byte_offset + 1);
+      return (byte & 0x80) >> 7 | (byte2 & 0x03) << 1;
+    }
+
+    // 3 bits within one byte.
+    return (byte >> bit_remainder) & 0x07;
+  }
+
   // Store `value` on `length` bits in the region starting at bit offset
   // `bit_offset`.  The bit at the smallest offset is the least significant
   // bit of the stored `value`.  `value` must not be larger than `length`
   // bits.
   void StoreBits(uintptr_t bit_offset, uint32_t value, size_t length) {
-    CHECK_LE(value, MaxInt<uint32_t>(length));
+    CHECK_LT(value, 2u << length);
     for (size_t i = 0; i < length; ++i) {
       bool ith_bit = value & (1 << i);
       StoreBit(bit_offset + i, ith_bit);

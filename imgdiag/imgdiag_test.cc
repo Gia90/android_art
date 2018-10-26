@@ -36,23 +36,15 @@ static const char* kImgDiagDiffPid = "--image-diff-pid";
 static const char* kImgDiagBootImage = "--boot-image";
 static const char* kImgDiagBinaryName = "imgdiag";
 
-static const char* kImgDiagZygoteDiffPid = "--zygote-diff-pid";
-
-// from kernel <include/linux/threads.h>
-#define PID_MAX_LIMIT (4*1024*1024)  // Upper bound. Most kernel configs will have smaller max pid.
-
-static const pid_t kImgDiagGuaranteedBadPid = (PID_MAX_LIMIT + 1);
-
 class ImgDiagTest : public CommonRuntimeTest {
  protected:
   virtual void SetUp() {
     CommonRuntimeTest::SetUp();
 
     // We loaded the runtime with an explicit image. Therefore the image space must exist.
-    std::vector<gc::space::ImageSpace*> image_spaces =
-        Runtime::Current()->GetHeap()->GetBootImageSpaces();
-    ASSERT_TRUE(!image_spaces.empty());
-    boot_image_location_ = image_spaces[0]->GetImageLocation();
+    gc::space::ImageSpace* image_space = Runtime::Current()->GetHeap()->GetImageSpace();
+    ASSERT_TRUE(image_space != nullptr);
+    boot_image_location_ = image_space->GetImageLocation();
   }
 
   virtual void SetUpRuntimeOptions(RuntimeOptions* options) OVERRIDE {
@@ -92,25 +84,17 @@ class ImgDiagTest : public CommonRuntimeTest {
 
     // Run imgdiag --image-diff-pid=$image_diff_pid and wait until it's done with a 0 exit code.
     std::string diff_pid_args;
-    std::string zygote_diff_pid_args;
     {
       std::stringstream diff_pid_args_ss;
       diff_pid_args_ss << kImgDiagDiffPid << "=" << image_diff_pid;
       diff_pid_args = diff_pid_args_ss.str();
     }
+    std::string boot_image_args;
     {
-      std::stringstream zygote_pid_args_ss;
-      zygote_pid_args_ss << kImgDiagZygoteDiffPid << "=" << image_diff_pid;
-      zygote_diff_pid_args = zygote_pid_args_ss.str();
+      boot_image_args = boot_image_args + kImgDiagBootImage + "=" + boot_image;
     }
-    std::string boot_image_args = std::string(kImgDiagBootImage) + "=" + boot_image;
 
-    std::vector<std::string> exec_argv = {
-        file_path,
-        diff_pid_args,
-        zygote_diff_pid_args,
-        boot_image_args
-    };
+    std::vector<std::string> exec_argv = { file_path, diff_pid_args, boot_image_args };
 
     return ::art::Exec(exec_argv, error_msg);
   }
@@ -125,12 +109,11 @@ class ImgDiagTest : public CommonRuntimeTest {
   std::string boot_image_location_;
 };
 
-#if defined (ART_TARGET) && !defined(__mips__)
+#if defined (ART_TARGET)
 TEST_F(ImgDiagTest, ImageDiffPidSelf) {
 #else
 // Can't run this test on the host, it will fail when trying to open /proc/kpagestats
 // because it's root read-only.
-// Also test fails on mips. b/24596015.
 TEST_F(ImgDiagTest, DISABLED_ImageDiffPidSelf) {
 #endif
   // Invoke 'img_diag' against the current process.
@@ -148,8 +131,7 @@ TEST_F(ImgDiagTest, ImageDiffBadPid) {
 
   // Run imgdiag --image-diff-pid=some_bad_pid and wait until it's done with a 0 exit code.
   std::string error_msg;
-  ASSERT_FALSE(ExecDefaultBootImage(kImgDiagGuaranteedBadPid,
-                                    &error_msg)) << "Incorrectly executed";
+  ASSERT_FALSE(ExecDefaultBootImage(-12345, &error_msg)) << "Incorrectly executed";
   UNUSED(error_msg);
 }
 

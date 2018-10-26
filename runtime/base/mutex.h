@@ -12,6 +12,9 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Modified by Intel Corporation
+ *
  */
 
 #ifndef ART_RUNTIME_BASE_MUTEX_H_
@@ -43,8 +46,8 @@
 
 namespace art {
 
-class SHARED_LOCKABLE ReaderWriterMutex;
-class SHARED_LOCKABLE MutatorMutex;
+class LOCKABLE ReaderWriterMutex;
+class LOCKABLE MutatorMutex;
 class ScopedContentionRecorder;
 class Thread;
 
@@ -60,35 +63,29 @@ enum LockLevel {
   kUnexpectedSignalLock,
   kThreadSuspendCountLock,
   kAbortLock,
-  kLambdaTableLock,
   kJdwpSocketLock,
   kRegionSpaceRegionLock,
-  kRosAllocGlobalLock,
-  kRosAllocBracketLock,
-  kRosAllocBulkFreeLock,
-  kMarkSweepMarkStackLock,
   kTransactionLogLock,
-  kJniWeakGlobalsLock,
   kReferenceQueueSoftReferencesLock,
   kReferenceQueuePhantomReferencesLock,
   kReferenceQueueFinalizerReferencesLock,
   kReferenceQueueWeakReferencesLock,
   kReferenceQueueClearedReferencesLock,
   kReferenceProcessorLock,
-  kJitDebugInterfaceLock,
+  kJitCodeCacheLock,
+  kRosAllocGlobalLock,
+  kRosAllocBracketLock,
+  kRosAllocBulkFreeLock,
   kAllocSpaceLock,
   kBumpPointerSpaceBlockLock,
   kArenaPoolLock,
   kDexFileMethodInlinerLock,
   kDexFileToMethodInlinerMapLock,
+  kMarkSweepMarkStackLock,
   kInternTableLock,
   kOatFileSecondaryLookupLock,
-  kHostDlOpenHandlesLock,
-  kOatFileManagerLock,
   kTracingUniqueMethodsLock,
   kTracingStreamingLock,
-  kDeoptimizedMethodsLock,
-  kClassLoaderClassesLock,
   kDefaultMutexLevel,
   kMarkSweepLargeObjectLock,
   kPinTableLock,
@@ -97,8 +94,7 @@ enum LockLevel {
   kAllocatedThreadIdsLock,
   kMonitorPoolLock,
   kMethodVerifiersLock,
-  kClassLinkerClassesLock,  // TODO rename.
-  kJitCodeCacheLock,
+  kClassLinkerClassesLock,
   kBreakpointLock,
   kMonitorLock,
   kMonitorListLock,
@@ -220,37 +216,35 @@ class LOCKABLE Mutex : public BaseMutex {
   virtual bool IsMutex() const { return true; }
 
   // Block until mutex is free then acquire exclusive access.
-  void ExclusiveLock(Thread* self) ACQUIRE();
-  void Lock(Thread* self) ACQUIRE() {  ExclusiveLock(self); }
+  void ExclusiveLock(Thread* self) EXCLUSIVE_LOCK_FUNCTION();
+  void Lock(Thread* self) EXCLUSIVE_LOCK_FUNCTION() {  ExclusiveLock(self); }
 
   // Returns true if acquires exclusive access, false otherwise.
-  bool ExclusiveTryLock(Thread* self) TRY_ACQUIRE(true);
-  bool TryLock(Thread* self) TRY_ACQUIRE(true) { return ExclusiveTryLock(self); }
+  bool ExclusiveTryLock(Thread* self) EXCLUSIVE_TRYLOCK_FUNCTION(true);
+  bool TryLock(Thread* self) EXCLUSIVE_TRYLOCK_FUNCTION(true) { return ExclusiveTryLock(self); }
 
   // Release exclusive access.
-  void ExclusiveUnlock(Thread* self) RELEASE();
-  void Unlock(Thread* self) RELEASE() {  ExclusiveUnlock(self); }
+  void ExclusiveUnlock(Thread* self) UNLOCK_FUNCTION();
+  void Unlock(Thread* self) UNLOCK_FUNCTION() {  ExclusiveUnlock(self); }
 
   // Is the current thread the exclusive holder of the Mutex.
   bool IsExclusiveHeld(const Thread* self) const;
 
   // Assert that the Mutex is exclusively held by the current thread.
-  void AssertExclusiveHeld(const Thread* self) ASSERT_CAPABILITY(this) {
+  void AssertExclusiveHeld(const Thread* self) {
     if (kDebugLocking && (gAborting == 0)) {
       CHECK(IsExclusiveHeld(self)) << *this;
     }
   }
-  void AssertHeld(const Thread* self) ASSERT_CAPABILITY(this) { AssertExclusiveHeld(self); }
+  void AssertHeld(const Thread* self) { AssertExclusiveHeld(self); }
 
   // Assert that the Mutex is not held by the current thread.
-  void AssertNotHeldExclusive(const Thread* self) ASSERT_CAPABILITY(!*this) {
+  void AssertNotHeldExclusive(const Thread* self) {
     if (kDebugLocking && (gAborting == 0)) {
       CHECK(!IsExclusiveHeld(self)) << *this;
     }
   }
-  void AssertNotHeld(const Thread* self) ASSERT_CAPABILITY(!*this) {
-    AssertNotHeldExclusive(self);
-  }
+  void AssertNotHeld(const Thread* self) { AssertNotHeldExclusive(self); }
 
   // Id associated with exclusive owner. No memory ordering semantics if called from a thread other
   // than the owner.
@@ -262,9 +256,6 @@ class LOCKABLE Mutex : public BaseMutex {
   }
 
   virtual void Dump(std::ostream& os) const;
-
-  // For negative capabilities in clang annotations.
-  const Mutex& operator!() const { return *this; }
 
  private:
 #if ART_USE_FUTEXES
@@ -301,7 +292,7 @@ class LOCKABLE Mutex : public BaseMutex {
 // Shared(n) | Block         | error           | SharedLock(n+1)* | Shared(n-1) or Free
 // * for large values of n the SharedLock may block.
 std::ostream& operator<<(std::ostream& os, const ReaderWriterMutex& mu);
-class SHARED_LOCKABLE ReaderWriterMutex : public BaseMutex {
+class LOCKABLE ReaderWriterMutex : public BaseMutex {
  public:
   explicit ReaderWriterMutex(const char* name, LockLevel level = kDefaultMutexLevel);
   ~ReaderWriterMutex();
@@ -309,12 +300,12 @@ class SHARED_LOCKABLE ReaderWriterMutex : public BaseMutex {
   virtual bool IsReaderWriterMutex() const { return true; }
 
   // Block until ReaderWriterMutex is free then acquire exclusive access.
-  void ExclusiveLock(Thread* self) ACQUIRE();
-  void WriterLock(Thread* self) ACQUIRE() {  ExclusiveLock(self); }
+  void ExclusiveLock(Thread* self) EXCLUSIVE_LOCK_FUNCTION();
+  void WriterLock(Thread* self) EXCLUSIVE_LOCK_FUNCTION() {  ExclusiveLock(self); }
 
   // Release exclusive access.
-  void ExclusiveUnlock(Thread* self) RELEASE();
-  void WriterUnlock(Thread* self) RELEASE() {  ExclusiveUnlock(self); }
+  void ExclusiveUnlock(Thread* self) UNLOCK_FUNCTION();
+  void WriterUnlock(Thread* self) UNLOCK_FUNCTION() {  ExclusiveUnlock(self); }
 
   // Block until ReaderWriterMutex is free and acquire exclusive access. Returns true on success
   // or false if timeout is reached.
@@ -324,54 +315,50 @@ class SHARED_LOCKABLE ReaderWriterMutex : public BaseMutex {
 #endif
 
   // Block until ReaderWriterMutex is shared or free then acquire a share on the access.
-  void SharedLock(Thread* self) ACQUIRE_SHARED() ALWAYS_INLINE;
-  void ReaderLock(Thread* self) ACQUIRE_SHARED() { SharedLock(self); }
+  void SharedLock(Thread* self) SHARED_LOCK_FUNCTION() ALWAYS_INLINE;
+  void ReaderLock(Thread* self) SHARED_LOCK_FUNCTION() { SharedLock(self); }
 
   // Try to acquire share of ReaderWriterMutex.
-  bool SharedTryLock(Thread* self) SHARED_TRYLOCK_FUNCTION(true);
+  bool SharedTryLock(Thread* self) EXCLUSIVE_TRYLOCK_FUNCTION(true);
 
   // Release a share of the access.
-  void SharedUnlock(Thread* self) RELEASE_SHARED() ALWAYS_INLINE;
-  void ReaderUnlock(Thread* self) RELEASE_SHARED() { SharedUnlock(self); }
+  void SharedUnlock(Thread* self) UNLOCK_FUNCTION() ALWAYS_INLINE;
+  void ReaderUnlock(Thread* self) UNLOCK_FUNCTION() { SharedUnlock(self); }
 
   // Is the current thread the exclusive holder of the ReaderWriterMutex.
   bool IsExclusiveHeld(const Thread* self) const;
 
   // Assert the current thread has exclusive access to the ReaderWriterMutex.
-  void AssertExclusiveHeld(const Thread* self) ASSERT_CAPABILITY(this) {
+  void AssertExclusiveHeld(const Thread* self) {
     if (kDebugLocking && (gAborting == 0)) {
       CHECK(IsExclusiveHeld(self)) << *this;
     }
   }
-  void AssertWriterHeld(const Thread* self) ASSERT_CAPABILITY(this) { AssertExclusiveHeld(self); }
+  void AssertWriterHeld(const Thread* self) { AssertExclusiveHeld(self); }
 
   // Assert the current thread doesn't have exclusive access to the ReaderWriterMutex.
-  void AssertNotExclusiveHeld(const Thread* self) ASSERT_CAPABILITY(!this) {
+  void AssertNotExclusiveHeld(const Thread* self) {
     if (kDebugLocking && (gAborting == 0)) {
       CHECK(!IsExclusiveHeld(self)) << *this;
     }
   }
-  void AssertNotWriterHeld(const Thread* self) ASSERT_CAPABILITY(!this) {
-    AssertNotExclusiveHeld(self);
-  }
+  void AssertNotWriterHeld(const Thread* self) { AssertNotExclusiveHeld(self); }
 
   // Is the current thread a shared holder of the ReaderWriterMutex.
   bool IsSharedHeld(const Thread* self) const;
 
   // Assert the current thread has shared access to the ReaderWriterMutex.
-  void AssertSharedHeld(const Thread* self) ASSERT_SHARED_CAPABILITY(this) {
+  void AssertSharedHeld(const Thread* self) {
     if (kDebugLocking && (gAborting == 0)) {
       // TODO: we can only assert this well when self != null.
       CHECK(IsSharedHeld(self) || self == nullptr) << *this;
     }
   }
-  void AssertReaderHeld(const Thread* self) ASSERT_SHARED_CAPABILITY(this) {
-    AssertSharedHeld(self);
-  }
+  void AssertReaderHeld(const Thread* self) { AssertSharedHeld(self); }
 
   // Assert the current thread doesn't hold this ReaderWriterMutex either in shared or exclusive
   // mode.
-  void AssertNotHeld(const Thread* self) ASSERT_SHARED_CAPABILITY(!this) {
+  void AssertNotHeld(const Thread* self) {
     if (kDebugLocking && (gAborting == 0)) {
       CHECK(!IsSharedHeld(self)) << *this;
     }
@@ -382,9 +369,6 @@ class SHARED_LOCKABLE ReaderWriterMutex : public BaseMutex {
   uint64_t GetExclusiveOwnerTid() const;
 
   virtual void Dump(std::ostream& os) const;
-
-  // For negative capabilities in clang annotations.
-  const ReaderWriterMutex& operator!() const { return *this; }
 
  private:
 #if ART_USE_FUTEXES
@@ -420,16 +404,13 @@ class SHARED_LOCKABLE ReaderWriterMutex : public BaseMutex {
 // suspended states before exclusive ownership of the mutator mutex is sought.
 //
 std::ostream& operator<<(std::ostream& os, const MutatorMutex& mu);
-class SHARED_LOCKABLE MutatorMutex : public ReaderWriterMutex {
+class LOCKABLE MutatorMutex : public ReaderWriterMutex {
  public:
   explicit MutatorMutex(const char* name, LockLevel level = kDefaultMutexLevel)
     : ReaderWriterMutex(name, level) {}
   ~MutatorMutex() {}
 
   virtual bool IsMutatorMutex() const { return true; }
-
-  // For negative capabilities in clang annotations.
-  const MutatorMutex& operator!() const { return *this; }
 
  private:
   friend class Thread;
@@ -443,7 +424,7 @@ class SHARED_LOCKABLE MutatorMutex : public ReaderWriterMutex {
 // (Signal) or all at once (Broadcast).
 class ConditionVariable {
  public:
-  ConditionVariable(const char* name, Mutex& mutex);
+  explicit ConditionVariable(const char* name, Mutex& mutex);
   ~ConditionVariable();
 
   void Broadcast(Thread* self);
@@ -479,13 +460,13 @@ class ConditionVariable {
 
 // Scoped locker/unlocker for a regular Mutex that acquires mu upon construction and releases it
 // upon destruction.
-class SCOPED_CAPABILITY MutexLock {
+class SCOPED_LOCKABLE MutexLock {
  public:
-  MutexLock(Thread* self, Mutex& mu) ACQUIRE(mu) : self_(self), mu_(mu) {
+  explicit MutexLock(Thread* self, Mutex& mu) EXCLUSIVE_LOCK_FUNCTION(mu) : self_(self), mu_(mu) {
     mu_.ExclusiveLock(self_);
   }
 
-  ~MutexLock() RELEASE() {
+  ~MutexLock() UNLOCK_FUNCTION() {
     mu_.ExclusiveUnlock(self_);
   }
 
@@ -499,14 +480,14 @@ class SCOPED_CAPABILITY MutexLock {
 
 // Scoped locker/unlocker for a ReaderWriterMutex that acquires read access to mu upon
 // construction and releases it upon destruction.
-class SCOPED_CAPABILITY ReaderMutexLock {
+class SCOPED_LOCKABLE ReaderMutexLock {
  public:
-  ReaderMutexLock(Thread* self, ReaderWriterMutex& mu) ACQUIRE(mu) :
+  explicit ReaderMutexLock(Thread* self, ReaderWriterMutex& mu) EXCLUSIVE_LOCK_FUNCTION(mu) :
       self_(self), mu_(mu) {
     mu_.SharedLock(self_);
   }
 
-  ~ReaderMutexLock() RELEASE() {
+  ~ReaderMutexLock() UNLOCK_FUNCTION() {
     mu_.SharedUnlock(self_);
   }
 
@@ -521,9 +502,9 @@ class SCOPED_CAPABILITY ReaderMutexLock {
 
 // Scoped locker/unlocker for a ReaderWriterMutex that acquires write access to mu upon
 // construction and releases it upon destruction.
-class SCOPED_CAPABILITY WriterMutexLock {
+class SCOPED_LOCKABLE WriterMutexLock {
  public:
-  WriterMutexLock(Thread* self, ReaderWriterMutex& mu) EXCLUSIVE_LOCK_FUNCTION(mu) :
+  explicit WriterMutexLock(Thread* self, ReaderWriterMutex& mu) EXCLUSIVE_LOCK_FUNCTION(mu) :
       self_(self), mu_(mu) {
     mu_.ExclusiveLock(self_);
   }
@@ -540,17 +521,6 @@ class SCOPED_CAPABILITY WriterMutexLock {
 // Catch bug where variable name is omitted. "WriterMutexLock (lock);" instead of
 // "WriterMutexLock mu(lock)".
 #define WriterMutexLock(x) static_assert(0, "WriterMutexLock declaration missing variable name")
-
-// For StartNoThreadSuspension and EndNoThreadSuspension.
-class CAPABILITY("role") Role {
- public:
-  void Acquire() ACQUIRE() {}
-  void Release() RELEASE() {}
-  const Role& operator!() const { return *this; }
-};
-
-class Uninterruptible : public Role {
-};
 
 // Global mutexes corresponding to the levels above.
 class Locks {
@@ -617,12 +587,9 @@ class Locks {
   // TODO: improve name, perhaps instrumentation_update_lock_.
   static Mutex* deoptimization_lock_ ACQUIRED_AFTER(alloc_tracker_lock_);
 
-  // Guards String initializer register map in interpreter.
-  static Mutex* interpreter_string_init_map_lock_ ACQUIRED_AFTER(deoptimization_lock_);
-
   // The thread_list_lock_ guards ThreadList::list_. It is also commonly held to stop threads
   // attaching and detaching.
-  static Mutex* thread_list_lock_ ACQUIRED_AFTER(interpreter_string_init_map_lock_);
+  static Mutex* thread_list_lock_ ACQUIRED_AFTER(deoptimization_lock_);
 
   // Signaled when threads terminate. Used to determine when all non-daemons have terminated.
   static ConditionVariable* thread_exit_cond_ GUARDED_BY(Locks::thread_list_lock_);
@@ -648,14 +615,8 @@ class Locks {
   // Guards modification of the LDT on x86.
   static Mutex* modify_ldt_lock_ ACQUIRED_AFTER(allocated_thread_ids_lock_);
 
-  // Guards opened oat files in OatFileManager.
-  static ReaderWriterMutex* oat_file_manager_lock_ ACQUIRED_AFTER(modify_ldt_lock_);
-
-  // Guards dlopen_handles_ in DlOpenOatFile.
-  static Mutex* host_dlopen_handles_lock_ ACQUIRED_AFTER(oat_file_manager_lock_);
-
   // Guards intern table.
-  static Mutex* intern_table_lock_ ACQUIRED_AFTER(host_dlopen_handles_lock_);
+  static Mutex* intern_table_lock_ ACQUIRED_AFTER(modify_ldt_lock_);
 
   // Guards reference processor.
   static Mutex* reference_processor_lock_ ACQUIRED_AFTER(intern_table_lock_);
@@ -690,16 +651,6 @@ class Locks {
 
   // Have an exclusive logging thread.
   static Mutex* logging_lock_ ACQUIRED_AFTER(unexpected_signal_lock_);
-
-  // Allow reader-writer mutual exclusion on the boxed table of lambda objects.
-  // TODO: this should be a RW mutex lock, except that ConditionVariables don't work with it.
-  static Mutex* lambda_table_lock_ ACQUIRED_AFTER(mutator_lock_);
-};
-
-class Roles {
- public:
-  // Uninterruptible means that the thread may not become suspended.
-  static Uninterruptible uninterruptible_;
 };
 
 }  // namespace art

@@ -19,7 +19,6 @@
 
 #include <map>
 #include <set>
-#include <unordered_map>
 
 #include "atomic.h"
 #include "base/hash_map.h"
@@ -52,7 +51,6 @@ enum AllocatorTag {
   kAllocatorTagMonitorList,
   kAllocatorTagClassTable,
   kAllocatorTagInternTable,
-  kAllocatorTagLambdaBoxTable,
   kAllocatorTagMaps,
   kAllocatorTagLOS,
   kAllocatorTagSafeMap,
@@ -117,7 +115,9 @@ class TrackingAllocatorImpl : public std::allocator<T> {
 
   // Used internally by STL data structures.
   template <class U>
-  TrackingAllocatorImpl(const TrackingAllocatorImpl<U, kTag>& alloc ATTRIBUTE_UNUSED) noexcept {}
+  TrackingAllocatorImpl(const TrackingAllocatorImpl<U, kTag>& alloc) noexcept {
+    UNUSED(alloc);
+  }
 
   // Used internally by STL data structures.
   TrackingAllocatorImpl() noexcept {
@@ -131,7 +131,8 @@ class TrackingAllocatorImpl : public std::allocator<T> {
     typedef TrackingAllocatorImpl<U, kTag> other;
   };
 
-  pointer allocate(size_type n, const_pointer hint ATTRIBUTE_UNUSED = 0) {
+  pointer allocate(size_type n, const_pointer hint = 0) {
+    UNUSED(hint);
     const size_t size = n * sizeof(T);
     TrackedAllocators::RegisterAllocation(GetTag(), size);
     return reinterpret_cast<pointer>(malloc(size));
@@ -152,24 +153,19 @@ class TrackingAllocatorImpl : public std::allocator<T> {
 template<class T, AllocatorTag kTag>
 // C++ doesn't allow template typedefs. This is a workaround template typedef which is
 // TrackingAllocatorImpl<T> if kEnableTrackingAllocator is true, std::allocator<T> otherwise.
-using TrackingAllocator = typename TypeStaticIf<kEnableTrackingAllocator,
-                                                TrackingAllocatorImpl<T, kTag>,
-                                                std::allocator<T>>::type;
+class TrackingAllocator : public TypeStaticIf<kEnableTrackingAllocator,
+                                              TrackingAllocatorImpl<T, kTag>,
+                                              std::allocator<T>>::type {
+};
 
 template<class Key, class T, AllocatorTag kTag, class Compare = std::less<Key>>
-using AllocationTrackingMultiMap = std::multimap<
-    Key, T, Compare, TrackingAllocator<std::pair<const Key, T>, kTag>>;
+class AllocationTrackingMultiMap : public std::multimap<
+    Key, T, Compare, TrackingAllocator<std::pair<Key, T>, kTag>> {
+};
 
 template<class Key, AllocatorTag kTag, class Compare = std::less<Key>>
-using AllocationTrackingSet = std::set<Key, Compare, TrackingAllocator<Key, kTag>>;
-
-template<class Key,
-         class T,
-         AllocatorTag kTag,
-         class Hash = std::hash<Key>,
-         class Pred = std::equal_to<Key>>
-using AllocationTrackingUnorderedMap = std::unordered_map<
-    Key, T, Hash, Pred, TrackingAllocator<std::pair<const Key, T>, kTag>>;
+class AllocationTrackingSet : public std::set<Key, Compare, TrackingAllocator<Key, kTag>> {
+};
 
 template<class Key,
          class T,

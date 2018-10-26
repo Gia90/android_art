@@ -13,22 +13,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+# Modified by Intel Corporation
+#
+#
 
 LOCAL_PATH:= $(call my-dir)
 
-include art/build/Android.common_build.mk
+include $(VENDOR_ART_PATH)/build/Android.common_build.mk
 
 include $(CLEAR_VARS)
 LOCAL_CPP_EXTENSION := $(ART_CPP_EXTENSION)
 LOCAL_MODULE_TAGS := optional
 LOCAL_CFLAGS += $(ART_TARGET_CFLAGS)
-LOCAL_ASFLAGS += $(ART_TARGET_ASFLAGS)
 LOCAL_SRC_FILES := sigchain_dummy.cc
 LOCAL_CLANG = $(ART_TARGET_CLANG)
 LOCAL_MODULE:= libsigchain
 LOCAL_SHARED_LIBRARIES := liblog
 LOCAL_ADDITIONAL_DEPENDENCIES := $(LOCAL_PATH)/Android.mk
-LOCAL_ADDITIONAL_DEPENDENCIES += art/build/Android.common_build.mk
+LOCAL_ADDITIONAL_DEPENDENCIES += $(VENDOR_ART_PATH)/build/Android.common_build.mk
 LOCAL_NATIVE_COVERAGE := $(ART_COVERAGE)
 $(eval $(call set-target-local-clang-vars))
 include $(BUILD_SHARED_LIBRARY)
@@ -37,13 +39,12 @@ include $(CLEAR_VARS)
 LOCAL_CPP_EXTENSION := $(ART_CPP_EXTENSION)
 LOCAL_MODULE_TAGS := optional
 LOCAL_CFLAGS += $(ART_TARGET_CFLAGS)
-LOCAL_ASFLAGS += $(ART_TARGET_ASFLAGS)
 LOCAL_SRC_FILES := sigchain.cc
 LOCAL_CLANG = $(ART_TARGET_CLANG)
 LOCAL_MODULE:= libsigchain
 LOCAL_SHARED_LIBRARIES := liblog
 LOCAL_ADDITIONAL_DEPENDENCIES := $(LOCAL_PATH)/Android.mk
-LOCAL_ADDITIONAL_DEPENDENCIES += art/build/Android.common_build.mk
+LOCAL_ADDITIONAL_DEPENDENCIES += $(VENDOR_ART_PATH)/build/Android.common_build.mk
 $(eval $(call set-target-local-clang-vars))
 include $(BUILD_STATIC_LIBRARY)
 
@@ -53,7 +54,6 @@ LOCAL_CPP_EXTENSION := $(ART_CPP_EXTENSION)
 LOCAL_MODULE_TAGS := optional
 LOCAL_IS_HOST_MODULE := true
 LOCAL_CFLAGS += $(ART_HOST_CFLAGS)
-LOCAL_ASFLAGS += $(ART_HOST_ASFLAGS)
 LOCAL_CLANG = $(ART_HOST_CLANG)
 LOCAL_SRC_FILES := sigchain_dummy.cc
 LOCAL_MODULE:= libsigchain
@@ -68,26 +68,9 @@ LOCAL_CPP_EXTENSION := $(ART_CPP_EXTENSION)
 LOCAL_MODULE_TAGS := optional
 LOCAL_IS_HOST_MODULE := true
 LOCAL_CFLAGS += $(ART_HOST_CFLAGS)
-LOCAL_ASFLAGS += $(ART_HOST_ASFLAGS)
 LOCAL_CLANG = $(ART_HOST_CLANG)
 LOCAL_SRC_FILES := sigchain.cc
 LOCAL_MODULE:= libsigchain
-LOCAL_ADDITIONAL_DEPENDENCIES += $(LOCAL_PATH)/Android.mk
-LOCAL_LDLIBS = -ldl
-LOCAL_MULTILIB := both
-include $(BUILD_HOST_STATIC_LIBRARY)
-
-# Create a dummy version of libsigchain which expose the necessary symbols
-# but throws when called. This can be used to get static binaries which don't
-# need the real functionality of the sig chain but need to please the linker.
-include $(CLEAR_VARS)
-LOCAL_CPP_EXTENSION := $(ART_CPP_EXTENSION)
-LOCAL_MODULE_TAGS := optional
-LOCAL_IS_HOST_MODULE := true
-LOCAL_CFLAGS += $(ART_HOST_CFLAGS)
-LOCAL_CLANG = $(ART_HOST_CLANG)
-LOCAL_SRC_FILES := sigchain_dummy.cc
-LOCAL_MODULE:= libsigchain_dummy
 LOCAL_ADDITIONAL_DEPENDENCIES += $(LOCAL_PATH)/Android.mk
 LOCAL_LDLIBS = -ldl
 LOCAL_MULTILIB := both

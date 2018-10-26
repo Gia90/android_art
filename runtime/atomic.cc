@@ -28,7 +28,7 @@ Mutex* QuasiAtomic::GetSwapMutex(const volatile int64_t* addr) {
 }
 
 void QuasiAtomic::Startup() {
-  if (NeedSwapMutexes(kRuntimeISA)) {
+  if (kNeedSwapMutexes) {
     gSwapMutexes = new std::vector<Mutex*>;
     for (size_t i = 0; i < kSwapMutexCount; ++i) {
       gSwapMutexes->push_back(new Mutex("QuasiAtomic stripe", kSwapMutexesLock));
@@ -37,7 +37,7 @@ void QuasiAtomic::Startup() {
 }
 
 void QuasiAtomic::Shutdown() {
-  if (NeedSwapMutexes(kRuntimeISA)) {
+  if (kNeedSwapMutexes) {
     STLDeleteElements(gSwapMutexes);
     delete gSwapMutexes;
   }

@@ -27,60 +27,57 @@ class ReferenceQueueTest : public CommonRuntimeTest {};
 
 TEST_F(ReferenceQueueTest, EnqueueDequeue) {
   Thread* self = Thread::Current();
-  ScopedObjectAccess soa(self);
   StackHandleScope<20> hs(self);
   Mutex lock("Reference queue lock");
   ReferenceQueue queue(&lock);
   ASSERT_TRUE(queue.IsEmpty());
+  ScopedObjectAccess soa(self);
   ASSERT_EQ(queue.GetLength(), 0U);
   auto ref_class = hs.NewHandle(
       Runtime::Current()->GetClassLinker()->FindClass(self, "Ljava/lang/ref/WeakReference;",
-                                                      ScopedNullHandle<mirror::ClassLoader>()));
+                                                      NullHandle<mirror::ClassLoader>()));
   ASSERT_TRUE(ref_class.Get() != nullptr);
   auto ref1(hs.NewHandle(ref_class->AllocObject(self)->AsReference()));
   ASSERT_TRUE(ref1.Get() != nullptr);
   auto ref2(hs.NewHandle(ref_class->AllocObject(self)->AsReference()));
   ASSERT_TRUE(ref2.Get() != nullptr);
-  queue.EnqueueReference(ref1.Get());
+  // FIFO ordering.
+  queue.EnqueuePendingReference(ref1.Get());
   ASSERT_TRUE(!queue.IsEmpty());
   ASSERT_EQ(queue.GetLength(), 1U);
-  queue.EnqueueReference(ref2.Get());
+  queue.EnqueuePendingReference(ref2.Get());
   ASSERT_TRUE(!queue.IsEmpty());
   ASSERT_EQ(queue.GetLength(), 2U);
-
-  std::set<mirror::Reference*> refs = {ref1.Get(), ref2.Get()};
-  std::set<mirror::Reference*> dequeued;
-  dequeued.insert(queue.DequeuePendingReference());
+  ASSERT_EQ(queue.DequeuePendingReference(), ref2.Get());
   ASSERT_TRUE(!queue.IsEmpty());
   ASSERT_EQ(queue.GetLength(), 1U);
-  dequeued.insert(queue.DequeuePendingReference());
+  ASSERT_EQ(queue.DequeuePendingReference(), ref1.Get());
   ASSERT_EQ(queue.GetLength(), 0U);
   ASSERT_TRUE(queue.IsEmpty());
-  ASSERT_EQ(refs, dequeued);
 }
 
 TEST_F(ReferenceQueueTest, Dump) {
   Thread* self = Thread::Current();
-  ScopedObjectAccess soa(self);
   StackHandleScope<20> hs(self);
   Mutex lock("Reference queue lock");
   ReferenceQueue queue(&lock);
+  ScopedObjectAccess soa(self);
   queue.Dump(LOG(INFO));
   auto weak_ref_class = hs.NewHandle(
       Runtime::Current()->GetClassLinker()->FindClass(self, "Ljava/lang/ref/WeakReference;",
-                                                      ScopedNullHandle<mirror::ClassLoader>()));
+                                                      NullHandle<mirror::ClassLoader>()));
   ASSERT_TRUE(weak_ref_class.Get() != nullptr);
   auto finalizer_ref_class = hs.NewHandle(
       Runtime::Current()->GetClassLinker()->FindClass(self, "Ljava/lang/ref/FinalizerReference;",
-                                                      ScopedNullHandle<mirror::ClassLoader>()));
+                                                      NullHandle<mirror::ClassLoader>()));
   ASSERT_TRUE(finalizer_ref_class.Get() != nullptr);
   auto ref1(hs.NewHandle(weak_ref_class->AllocObject(self)->AsReference()));
   ASSERT_TRUE(ref1.Get() != nullptr);
   auto ref2(hs.NewHandle(finalizer_ref_class->AllocObject(self)->AsReference()));
   ASSERT_TRUE(ref2.Get() != nullptr);
-  queue.EnqueueReference(ref1.Get());
+  queue.EnqueuePendingReference(ref1.Get());
   queue.Dump(LOG(INFO));
-  queue.EnqueueReference(ref2.Get());
+  queue.EnqueuePendingReference(ref2.Get());
   queue.Dump(LOG(INFO));
 }
 

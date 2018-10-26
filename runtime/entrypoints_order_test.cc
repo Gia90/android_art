@@ -12,6 +12,9 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Modified by Intel Corporation
+ *
  */
 
 #include <memory>
@@ -72,12 +75,15 @@ class EntrypointsOrderTest : public CommonRuntimeTest {
     EXPECT_OFFSET_DIFFP(Thread, tls32_, throwing_OutOfMemoryError, no_thread_suspension, 4);
     EXPECT_OFFSET_DIFFP(Thread, tls32_, no_thread_suspension, thread_exit_check_count, 4);
     EXPECT_OFFSET_DIFFP(Thread, tls32_, thread_exit_check_count, handling_signal_, 4);
+    EXPECT_OFFSET_DIFFP(Thread, tls32_, handling_signal_,
+                        deoptimization_return_value_is_reference, 4);
 
     // TODO: Better connection. Take alignment into account.
     EXPECT_OFFSET_DIFF_GT3(Thread, tls32_.thread_exit_check_count, tls64_.trace_clock_base, 4,
                            thread_tls32_to_tls64);
 
-    EXPECT_OFFSET_DIFFP(Thread, tls64_, trace_clock_base, stats, 8);
+    EXPECT_OFFSET_DIFFP(Thread, tls64_, trace_clock_base, deoptimization_return_value, 8);
+    EXPECT_OFFSET_DIFFP(Thread, tls64_, deoptimization_return_value, stats, 8);
 
     // TODO: Better connection. Take alignment into account.
     EXPECT_OFFSET_DIFF_GT3(Thread, tls64_.stats, tlsPtr_.card_table, 8, thread_tls64_to_tlsptr);
@@ -105,29 +111,24 @@ class EntrypointsOrderTest : public CommonRuntimeTest {
     EXPECT_OFFSET_DIFFP(Thread, tlsPtr_, single_step_control, stacked_shadow_frame_record,
                         sizeof(void*));
     EXPECT_OFFSET_DIFFP(Thread, tlsPtr_, stacked_shadow_frame_record,
-                        deoptimization_context_stack, sizeof(void*));
-    EXPECT_OFFSET_DIFFP(Thread, tlsPtr_, deoptimization_context_stack,
-                        frame_id_to_shadow_frame, sizeof(void*));
-    EXPECT_OFFSET_DIFFP(Thread, tlsPtr_, frame_id_to_shadow_frame, name, sizeof(void*));
+                        deoptimization_return_value_stack, sizeof(void*));
+    EXPECT_OFFSET_DIFFP(Thread, tlsPtr_, deoptimization_return_value_stack, name, sizeof(void*));
     EXPECT_OFFSET_DIFFP(Thread, tlsPtr_, name, pthread_self, sizeof(void*));
     EXPECT_OFFSET_DIFFP(Thread, tlsPtr_, pthread_self, last_no_thread_suspension_cause,
                         sizeof(void*));
     EXPECT_OFFSET_DIFFP(Thread, tlsPtr_, last_no_thread_suspension_cause, checkpoint_functions,
                         sizeof(void*));
-    EXPECT_OFFSET_DIFFP(Thread, tlsPtr_, checkpoint_functions, jni_entrypoints,
+    EXPECT_OFFSET_DIFFP(Thread, tlsPtr_, checkpoint_functions, interpreter_entrypoints,
                         sizeof(void*) * 6);
 
     // Skip across the entrypoints structures.
 
-    EXPECT_OFFSET_DIFFP(Thread, tlsPtr_, thread_local_objects, thread_local_start, sizeof(void*));
     EXPECT_OFFSET_DIFFP(Thread, tlsPtr_, thread_local_start, thread_local_pos, sizeof(void*));
     EXPECT_OFFSET_DIFFP(Thread, tlsPtr_, thread_local_pos, thread_local_end, sizeof(void*));
-    EXPECT_OFFSET_DIFFP(Thread, tlsPtr_, thread_local_end, mterp_current_ibase, sizeof(void*));
-    EXPECT_OFFSET_DIFFP(Thread, tlsPtr_, mterp_current_ibase, mterp_default_ibase, sizeof(void*));
-    EXPECT_OFFSET_DIFFP(Thread, tlsPtr_, mterp_default_ibase, mterp_alt_ibase, sizeof(void*));
-    EXPECT_OFFSET_DIFFP(Thread, tlsPtr_, mterp_alt_ibase, rosalloc_runs, sizeof(void*));
+    EXPECT_OFFSET_DIFFP(Thread, tlsPtr_, thread_local_end, thread_local_objects, sizeof(void*));
+    EXPECT_OFFSET_DIFFP(Thread, tlsPtr_, thread_local_objects, rosalloc_runs, sizeof(void*));
     EXPECT_OFFSET_DIFFP(Thread, tlsPtr_, rosalloc_runs, thread_local_alloc_stack_top,
-                        sizeof(void*) * kNumRosAllocThreadLocalSizeBracketsInThread);
+                        sizeof(void*) * kNumRosAllocThreadLocalSizeBrackets);
     EXPECT_OFFSET_DIFFP(Thread, tlsPtr_, thread_local_alloc_stack_top, thread_local_alloc_stack_end,
                         sizeof(void*));
     EXPECT_OFFSET_DIFFP(Thread, tlsPtr_, thread_local_alloc_stack_end, held_mutexes, sizeof(void*));
@@ -135,9 +136,17 @@ class EntrypointsOrderTest : public CommonRuntimeTest {
                         sizeof(void*) * kLockLevelCount);
     EXPECT_OFFSET_DIFFP(Thread, tlsPtr_, nested_signal_state, flip_function, sizeof(void*));
     EXPECT_OFFSET_DIFFP(Thread, tlsPtr_, flip_function, method_verifier, sizeof(void*));
-    EXPECT_OFFSET_DIFFP(Thread, tlsPtr_, method_verifier, thread_local_mark_stack, sizeof(void*));
-    EXPECT_OFFSET_DIFF(Thread, tlsPtr_.thread_local_mark_stack, Thread, wait_mutex_, sizeof(void*),
+    EXPECT_OFFSET_DIFF(Thread, tlsPtr_.method_verifier, Thread, wait_mutex_, sizeof(void*),
                        thread_tlsptr_end);
+  }
+
+  void CheckInterpreterEntryPoints() {
+    CHECKED(OFFSETOF_MEMBER(InterpreterEntryPoints, pInterpreterToInterpreterBridge) == 0,
+            InterpreterEntryPoints_start_with_i2i);
+    EXPECT_OFFSET_DIFFNP(InterpreterEntryPoints, pInterpreterToInterpreterBridge,
+                         pInterpreterToCompiledCodeBridge, sizeof(void*));
+    CHECKED(OFFSETOF_MEMBER(InterpreterEntryPoints, pInterpreterToCompiledCodeBridge)
+            + sizeof(void*) == sizeof(InterpreterEntryPoints), InterpreterEntryPoints_all);
   }
 
   void CheckJniEntryPoints() {
@@ -321,18 +330,22 @@ class EntrypointsOrderTest : public CommonRuntimeTest {
                          sizeof(void*));
     EXPECT_OFFSET_DIFFNP(QuickEntryPoints, pNewStringFromStringBuilder, pReadBarrierJni,
                          sizeof(void*));
-    EXPECT_OFFSET_DIFFNP(QuickEntryPoints, pReadBarrierJni, pReadBarrierMark, sizeof(void*));
-    EXPECT_OFFSET_DIFFNP(QuickEntryPoints, pReadBarrierMark, pReadBarrierSlow, sizeof(void*));
-    EXPECT_OFFSET_DIFFNP(QuickEntryPoints, pReadBarrierSlow, pReadBarrierForRootSlow,
+    EXPECT_OFFSET_DIFFNP(QuickEntryPoints, pReadBarrierJni, pJniMethodStartFromCode,
                          sizeof(void*));
+    EXPECT_OFFSET_DIFFNP(QuickEntryPoints, pJniMethodStartFromCode,
+                         pJniMethodStartSynchronizedFromCode, sizeof(void*));
 
-    CHECKED(OFFSETOF_MEMBER(QuickEntryPoints, pReadBarrierForRootSlow)
+    CHECKED(OFFSETOF_MEMBER(QuickEntryPoints, pJniMethodStartSynchronizedFromCode)
             + sizeof(void*) == sizeof(QuickEntryPoints), QuickEntryPoints_all);
   }
 };
 
 TEST_F(EntrypointsOrderTest, ThreadOffsets) {
   CheckThreadOffsets();
+}
+
+TEST_F(EntrypointsOrderTest, InterpreterEntryPoints) {
+  CheckInterpreterEntryPoints();
 }
 
 TEST_F(EntrypointsOrderTest, JniEntryPoints) {

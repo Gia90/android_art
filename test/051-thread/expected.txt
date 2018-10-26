@@ -1,4 +1,3 @@
-JNI_OnLoad called
 thread test starting
 testThreadCapacity thread count: 512
 testThreadDaemons starting thread 'TestDaemonThread'

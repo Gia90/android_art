@@ -12,6 +12,9 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Modified by Intel Corporation
+ *
  */
 
 #include "assembler_x86_64.h"
@@ -27,9 +30,7 @@
 namespace art {
 
 TEST(AssemblerX86_64, CreateBuffer) {
-  ArenaPool pool;
-  ArenaAllocator arena(&pool);
-  AssemblerBuffer buffer(&arena);
+  AssemblerBuffer buffer;
   AssemblerBuffer::EnsureCapacity ensured(&buffer);
   buffer.Emit<uint8_t>(0x42);
   ASSERT_EQ(static_cast<size_t>(1), buffer.Size());
@@ -37,7 +38,7 @@ TEST(AssemblerX86_64, CreateBuffer) {
   ASSERT_EQ(static_cast<size_t>(5), buffer.Size());
 }
 
-#ifdef __ANDROID__
+#ifdef HAVE_ANDROID_OS
 static constexpr size_t kRandomIterations = 1000;  // Devices might be puny, don't stress them...
 #else
 static constexpr size_t kRandomIterations = 100000;  // Hosts are pretty powerful.
@@ -497,98 +498,6 @@ TEST_F(AssemblerX86_64Test, SarqImm) {
   DriverStr(RepeatRI(&x86_64::X86_64Assembler::sarq, 1U, "sarq ${imm}, %{reg}"), "sarqi");
 }
 
-// Rorl only allows CL as the shift count.
-std::string rorl_fn(AssemblerX86_64Test::Base* assembler_test, x86_64::X86_64Assembler* assembler) {
-  std::ostringstream str;
-
-  std::vector<x86_64::CpuRegister*> registers = assembler_test->GetRegisters();
-
-  x86_64::CpuRegister shifter(x86_64::RCX);
-  for (auto reg : registers) {
-    assembler->rorl(*reg, shifter);
-    str << "rorl %cl, %" << assembler_test->GetSecondaryRegisterName(*reg) << "\n";
-  }
-
-  return str.str();
-}
-
-TEST_F(AssemblerX86_64Test, RorlReg) {
-  DriverFn(&rorl_fn, "rorl");
-}
-
-TEST_F(AssemblerX86_64Test, RorlImm) {
-  DriverStr(Repeatri(&x86_64::X86_64Assembler::rorl, 1U, "rorl ${imm}, %{reg}"), "rorli");
-}
-
-// Roll only allows CL as the shift count.
-std::string roll_fn(AssemblerX86_64Test::Base* assembler_test, x86_64::X86_64Assembler* assembler) {
-  std::ostringstream str;
-
-  std::vector<x86_64::CpuRegister*> registers = assembler_test->GetRegisters();
-
-  x86_64::CpuRegister shifter(x86_64::RCX);
-  for (auto reg : registers) {
-    assembler->roll(*reg, shifter);
-    str << "roll %cl, %" << assembler_test->GetSecondaryRegisterName(*reg) << "\n";
-  }
-
-  return str.str();
-}
-
-TEST_F(AssemblerX86_64Test, RollReg) {
-  DriverFn(&roll_fn, "roll");
-}
-
-TEST_F(AssemblerX86_64Test, RollImm) {
-  DriverStr(Repeatri(&x86_64::X86_64Assembler::roll, 1U, "roll ${imm}, %{reg}"), "rolli");
-}
-
-// Rorq only allows CL as the shift count.
-std::string rorq_fn(AssemblerX86_64Test::Base* assembler_test, x86_64::X86_64Assembler* assembler) {
-  std::ostringstream str;
-
-  std::vector<x86_64::CpuRegister*> registers = assembler_test->GetRegisters();
-
-  x86_64::CpuRegister shifter(x86_64::RCX);
-  for (auto reg : registers) {
-    assembler->rorq(*reg, shifter);
-    str << "rorq %cl, %" << assembler_test->GetRegisterName(*reg) << "\n";
-  }
-
-  return str.str();
-}
-
-TEST_F(AssemblerX86_64Test, RorqReg) {
-  DriverFn(&rorq_fn, "rorq");
-}
-
-TEST_F(AssemblerX86_64Test, RorqImm) {
-  DriverStr(RepeatRI(&x86_64::X86_64Assembler::rorq, 1U, "rorq ${imm}, %{reg}"), "rorqi");
-}
-
-// Rolq only allows CL as the shift count.
-std::string rolq_fn(AssemblerX86_64Test::Base* assembler_test, x86_64::X86_64Assembler* assembler) {
-  std::ostringstream str;
-
-  std::vector<x86_64::CpuRegister*> registers = assembler_test->GetRegisters();
-
-  x86_64::CpuRegister shifter(x86_64::RCX);
-  for (auto reg : registers) {
-    assembler->rolq(*reg, shifter);
-    str << "rolq %cl, %" << assembler_test->GetRegisterName(*reg) << "\n";
-  }
-
-  return str.str();
-}
-
-TEST_F(AssemblerX86_64Test, RolqReg) {
-  DriverFn(&rolq_fn, "rolq");
-}
-
-TEST_F(AssemblerX86_64Test, RolqImm) {
-  DriverStr(RepeatRI(&x86_64::X86_64Assembler::rolq, 1U, "rolq ${imm}, %{reg}"), "rolqi");
-}
-
 TEST_F(AssemblerX86_64Test, CmpqRegs) {
   DriverStr(RepeatRR(&x86_64::X86_64Assembler::cmpq, "cmpq %{reg2}, %{reg1}"), "cmpq");
 }
@@ -757,32 +666,8 @@ TEST_F(AssemblerX86_64Test, Movl) {
 TEST_F(AssemblerX86_64Test, Movw) {
   GetAssembler()->movw(x86_64::Address(x86_64::CpuRegister(x86_64::RAX), 0),
                        x86_64::CpuRegister(x86_64::R9));
-  GetAssembler()->movw(x86_64::Address(x86_64::CpuRegister(x86_64::RAX), 0),
-                       x86_64::Immediate(0));
-  GetAssembler()->movw(x86_64::Address(x86_64::CpuRegister(x86_64::R9), 0),
-                       x86_64::Immediate(0));
-  GetAssembler()->movw(x86_64::Address(x86_64::CpuRegister(x86_64::R14), 0),
-                       x86_64::Immediate(0));
-  const char* expected =
-      "movw %R9w, 0(%RAX)\n"
-      "movw $0, 0(%RAX)\n"
-      "movw $0, 0(%R9)\n"
-      "movw $0, 0(%R14)\n";
+  const char* expected = "movw %R9w, 0(%RAX)\n";
   DriverStr(expected, "movw");
-}
-
-TEST_F(AssemblerX86_64Test, Cmpw) {
-  GetAssembler()->cmpw(x86_64::Address(x86_64::CpuRegister(x86_64::RAX), 0),
-                       x86_64::Immediate(0));
-  GetAssembler()->cmpw(x86_64::Address(x86_64::CpuRegister(x86_64::R9), 0),
-                       x86_64::Immediate(0));
-  GetAssembler()->cmpw(x86_64::Address(x86_64::CpuRegister(x86_64::R14), 0),
-                       x86_64::Immediate(0));
-  const char* expected =
-      "cmpw $0, 0(%RAX)\n"
-      "cmpw $0, 0(%R9)\n"
-      "cmpw $0, 0(%R14)\n";
-  DriverStr(expected, "cmpw");
 }
 
 TEST_F(AssemblerX86_64Test, MovqAddrImm) {
@@ -790,46 +675,6 @@ TEST_F(AssemblerX86_64Test, MovqAddrImm) {
                        x86_64::Immediate(-5));
   const char* expected = "movq $-5, 0(%RAX)\n";
   DriverStr(expected, "movq");
-}
-
-TEST_F(AssemblerX86_64Test, Movntl) {
-  GetAssembler()->movntl(x86_64::Address(
-      x86_64::CpuRegister(x86_64::RDI), x86_64::CpuRegister(x86_64::RBX), x86_64::TIMES_4, 12), x86_64::CpuRegister(x86_64::RAX));
-  GetAssembler()->movntl(x86_64::Address(
-      x86_64::CpuRegister(x86_64::RDI), x86_64::CpuRegister(x86_64::R9), x86_64::TIMES_4, 12), x86_64::CpuRegister(x86_64::RAX));
-  GetAssembler()->movntl(x86_64::Address(
-      x86_64::CpuRegister(x86_64::RDI), x86_64::CpuRegister(x86_64::R9), x86_64::TIMES_4, 12), x86_64::CpuRegister(x86_64::RAX));
-  GetAssembler()->movntl(x86_64::Address(x86_64::CpuRegister(x86_64::R13), 0), x86_64::CpuRegister(x86_64::RAX));
-  GetAssembler()->movntl(x86_64::Address(
-      x86_64::CpuRegister(x86_64::R13), x86_64::CpuRegister(x86_64::R9), x86_64::TIMES_1, 0), x86_64::CpuRegister(x86_64::R9));
-  const char* expected =
-    "movntil %EAX, 0xc(%RDI,%RBX,4)\n"
-    "movntil %EAX, 0xc(%RDI,%R9,4)\n"
-    "movntil %EAX, 0xc(%RDI,%R9,4)\n"
-    "movntil %EAX, (%R13)\n"
-    "movntil %R9d, (%R13,%R9,1)\n";
-
-  DriverStr(expected, "movntl");
-}
-
-TEST_F(AssemblerX86_64Test, Movntq) {
-  GetAssembler()->movntq(x86_64::Address(
-      x86_64::CpuRegister(x86_64::RDI), x86_64::CpuRegister(x86_64::RBX), x86_64::TIMES_4, 12), x86_64::CpuRegister(x86_64::RAX));
-  GetAssembler()->movntq(x86_64::Address(
-      x86_64::CpuRegister(x86_64::RDI), x86_64::CpuRegister(x86_64::R9), x86_64::TIMES_4, 12), x86_64::CpuRegister(x86_64::RAX));
-  GetAssembler()->movntq(x86_64::Address(
-      x86_64::CpuRegister(x86_64::RDI), x86_64::CpuRegister(x86_64::R9), x86_64::TIMES_4, 12), x86_64::CpuRegister(x86_64::RAX));
-  GetAssembler()->movntq(x86_64::Address(x86_64::CpuRegister(x86_64::R13), 0), x86_64::CpuRegister(x86_64::RAX));
-  GetAssembler()->movntq(x86_64::Address(
-      x86_64::CpuRegister(x86_64::R13), x86_64::CpuRegister(x86_64::R9), x86_64::TIMES_1, 0), x86_64::CpuRegister(x86_64::R9));
-  const char* expected =
-    "movntiq %RAX, 0xc(%RDI,%RBX,4)\n"
-    "movntiq %RAX, 0xc(%RDI,%R9,4)\n"
-    "movntiq %RAX, 0xc(%RDI,%R9,4)\n"
-    "movntiq %RAX, (%R13)\n"
-    "movntiq %R9, (%R13,%R9,1)\n";
-
-  DriverStr(expected, "movntq");
 }
 
 TEST_F(AssemblerX86_64Test, Cvtsi2ssAddr) {
@@ -969,6 +814,50 @@ TEST_F(AssemblerX86_64Test, RepMovsw) {
 TEST_F(AssemblerX86_64Test, Movsxd) {
   DriverStr(RepeatRr(&x86_64::X86_64Assembler::movsxd, "movsxd %{reg2}, %{reg1}"), "movsxd");
 }
+
+TEST_F(AssemblerX86_64Test, AddqAddrImm) {
+  GetAssembler()->addq(x86_64::Address(x86_64::CpuRegister(x86_64::RAX), 0),
+                       x86_64::Immediate(100));
+  GetAssembler()->addq(x86_64::Address(x86_64::CpuRegister(x86_64::R8), 0),
+                       x86_64::Immediate(101));
+  const char* expected = "addq $100, 0(%rax)\n"
+                         "addq $101, 0(%r8)\n";
+  DriverStr(expected, "addq_addr_imm");
+}
+
+
+TEST_F(AssemblerX86_64Test, AddqAddrReg) {
+  GetAssembler()->addq(x86_64::Address(x86_64::CpuRegister(x86_64::RAX), 0),
+                       x86_64::CpuRegister(x86_64::R8));
+  GetAssembler()->addq(x86_64::Address(x86_64::CpuRegister(x86_64::R8), 0),
+                       x86_64::CpuRegister(x86_64::RAX));
+  const char* expected = "addq %r8, 0(%rax)\n"
+                         "addq %rax, 0(%r8)\n";
+  DriverStr(expected, "addq_addr_reg");
+}
+
+
+TEST_F(AssemblerX86_64Test, SubqAddrImm) {
+  GetAssembler()->subq(x86_64::Address(x86_64::CpuRegister(x86_64::RAX), 0),
+                       x86_64::Immediate(100));
+  GetAssembler()->subq(x86_64::Address(x86_64::CpuRegister(x86_64::R8), 0),
+                       x86_64::Immediate(101));
+  const char* expected = "subq $100, 0(%rax)\n"
+                         "subq $101, 0(%r8)\n";
+  DriverStr(expected, "subq_addr_imm");
+}
+
+
+TEST_F(AssemblerX86_64Test, SubqAddrReg) {
+  GetAssembler()->subq(x86_64::Address(x86_64::CpuRegister(x86_64::RAX), 0),
+                       x86_64::CpuRegister(x86_64::R8));
+  GetAssembler()->subq(x86_64::Address(x86_64::CpuRegister(x86_64::R8), 0),
+                       x86_64::CpuRegister(x86_64::RBX));
+  const char* expected = "subq %r8, 0(%rax)\n"
+                         "subq %rbx, 0(%r8)\n";
+  DriverStr(expected, "subq_addr_reg");
+}
+
 
 ///////////////////
 // FP Operations //
@@ -1259,151 +1148,6 @@ TEST_F(AssemblerX86_64Test, Bswapq) {
   DriverStr(RepeatR(&x86_64::X86_64Assembler::bswapq, "bswap %{reg}"), "bswapq");
 }
 
-TEST_F(AssemblerX86_64Test, Bsfl) {
-  DriverStr(Repeatrr(&x86_64::X86_64Assembler::bsfl, "bsfl %{reg2}, %{reg1}"), "bsfl");
-}
-
-TEST_F(AssemblerX86_64Test, BsflAddress) {
-  GetAssembler()->bsfl(x86_64::CpuRegister(x86_64::R10), x86_64::Address(
-      x86_64::CpuRegister(x86_64::RDI), x86_64::CpuRegister(x86_64::RBX), x86_64::TIMES_4, 12));
-  GetAssembler()->bsfl(x86_64::CpuRegister(x86_64::RDI), x86_64::Address(
-      x86_64::CpuRegister(x86_64::R10), x86_64::CpuRegister(x86_64::RBX), x86_64::TIMES_4, 12));
-  GetAssembler()->bsfl(x86_64::CpuRegister(x86_64::RDI), x86_64::Address(
-      x86_64::CpuRegister(x86_64::RDI), x86_64::CpuRegister(x86_64::R9), x86_64::TIMES_4, 12));
-  const char* expected =
-    "bsfl 0xc(%RDI,%RBX,4), %R10d\n"
-    "bsfl 0xc(%R10,%RBX,4), %edi\n"
-    "bsfl 0xc(%RDI,%R9,4), %edi\n";
-
-  DriverStr(expected, "bsfl_address");
-}
-
-TEST_F(AssemblerX86_64Test, Bsfq) {
-  DriverStr(RepeatRR(&x86_64::X86_64Assembler::bsfq, "bsfq %{reg2}, %{reg1}"), "bsfq");
-}
-
-TEST_F(AssemblerX86_64Test, BsfqAddress) {
-  GetAssembler()->bsfq(x86_64::CpuRegister(x86_64::R10), x86_64::Address(
-      x86_64::CpuRegister(x86_64::RDI), x86_64::CpuRegister(x86_64::RBX), x86_64::TIMES_4, 12));
-  GetAssembler()->bsfq(x86_64::CpuRegister(x86_64::RDI), x86_64::Address(
-      x86_64::CpuRegister(x86_64::R10), x86_64::CpuRegister(x86_64::RBX), x86_64::TIMES_4, 12));
-  GetAssembler()->bsfq(x86_64::CpuRegister(x86_64::RDI), x86_64::Address(
-      x86_64::CpuRegister(x86_64::RDI), x86_64::CpuRegister(x86_64::R9), x86_64::TIMES_4, 12));
-  const char* expected =
-    "bsfq 0xc(%RDI,%RBX,4), %R10\n"
-    "bsfq 0xc(%R10,%RBX,4), %RDI\n"
-    "bsfq 0xc(%RDI,%R9,4), %RDI\n";
-
-  DriverStr(expected, "bsfq_address");
-}
-
-TEST_F(AssemblerX86_64Test, Bsrl) {
-  DriverStr(Repeatrr(&x86_64::X86_64Assembler::bsrl, "bsrl %{reg2}, %{reg1}"), "bsrl");
-}
-
-TEST_F(AssemblerX86_64Test, BsrlAddress) {
-  GetAssembler()->bsrl(x86_64::CpuRegister(x86_64::R10), x86_64::Address(
-      x86_64::CpuRegister(x86_64::RDI), x86_64::CpuRegister(x86_64::RBX), x86_64::TIMES_4, 12));
-  GetAssembler()->bsrl(x86_64::CpuRegister(x86_64::RDI), x86_64::Address(
-      x86_64::CpuRegister(x86_64::R10), x86_64::CpuRegister(x86_64::RBX), x86_64::TIMES_4, 12));
-  GetAssembler()->bsrl(x86_64::CpuRegister(x86_64::RDI), x86_64::Address(
-      x86_64::CpuRegister(x86_64::RDI), x86_64::CpuRegister(x86_64::R9), x86_64::TIMES_4, 12));
-  const char* expected =
-    "bsrl 0xc(%RDI,%RBX,4), %R10d\n"
-    "bsrl 0xc(%R10,%RBX,4), %edi\n"
-    "bsrl 0xc(%RDI,%R9,4), %edi\n";
-
-  DriverStr(expected, "bsrl_address");
-}
-
-TEST_F(AssemblerX86_64Test, Bsrq) {
-  DriverStr(RepeatRR(&x86_64::X86_64Assembler::bsrq, "bsrq %{reg2}, %{reg1}"), "bsrq");
-}
-
-TEST_F(AssemblerX86_64Test, BsrqAddress) {
-  GetAssembler()->bsrq(x86_64::CpuRegister(x86_64::R10), x86_64::Address(
-      x86_64::CpuRegister(x86_64::RDI), x86_64::CpuRegister(x86_64::RBX), x86_64::TIMES_4, 12));
-  GetAssembler()->bsrq(x86_64::CpuRegister(x86_64::RDI), x86_64::Address(
-      x86_64::CpuRegister(x86_64::R10), x86_64::CpuRegister(x86_64::RBX), x86_64::TIMES_4, 12));
-  GetAssembler()->bsrq(x86_64::CpuRegister(x86_64::RDI), x86_64::Address(
-      x86_64::CpuRegister(x86_64::RDI), x86_64::CpuRegister(x86_64::R9), x86_64::TIMES_4, 12));
-  const char* expected =
-    "bsrq 0xc(%RDI,%RBX,4), %R10\n"
-    "bsrq 0xc(%R10,%RBX,4), %RDI\n"
-    "bsrq 0xc(%RDI,%R9,4), %RDI\n";
-
-  DriverStr(expected, "bsrq_address");
-}
-
-TEST_F(AssemblerX86_64Test, Popcntl) {
-  DriverStr(Repeatrr(&x86_64::X86_64Assembler::popcntl, "popcntl %{reg2}, %{reg1}"), "popcntl");
-}
-
-TEST_F(AssemblerX86_64Test, PopcntlAddress) {
-  GetAssembler()->popcntl(x86_64::CpuRegister(x86_64::R10), x86_64::Address(
-      x86_64::CpuRegister(x86_64::RDI), x86_64::CpuRegister(x86_64::RBX), x86_64::TIMES_4, 12));
-  GetAssembler()->popcntl(x86_64::CpuRegister(x86_64::RDI), x86_64::Address(
-      x86_64::CpuRegister(x86_64::R10), x86_64::CpuRegister(x86_64::RBX), x86_64::TIMES_4, 12));
-  GetAssembler()->popcntl(x86_64::CpuRegister(x86_64::RDI), x86_64::Address(
-      x86_64::CpuRegister(x86_64::RDI), x86_64::CpuRegister(x86_64::R9), x86_64::TIMES_4, 12));
-  const char* expected =
-    "popcntl 0xc(%RDI,%RBX,4), %R10d\n"
-    "popcntl 0xc(%R10,%RBX,4), %edi\n"
-    "popcntl 0xc(%RDI,%R9,4), %edi\n";
-
-  DriverStr(expected, "popcntl_address");
-}
-
-TEST_F(AssemblerX86_64Test, Popcntq) {
-  DriverStr(RepeatRR(&x86_64::X86_64Assembler::popcntq, "popcntq %{reg2}, %{reg1}"), "popcntq");
-}
-
-TEST_F(AssemblerX86_64Test, PopcntqAddress) {
-  GetAssembler()->popcntq(x86_64::CpuRegister(x86_64::R10), x86_64::Address(
-      x86_64::CpuRegister(x86_64::RDI), x86_64::CpuRegister(x86_64::RBX), x86_64::TIMES_4, 12));
-  GetAssembler()->popcntq(x86_64::CpuRegister(x86_64::RDI), x86_64::Address(
-      x86_64::CpuRegister(x86_64::R10), x86_64::CpuRegister(x86_64::RBX), x86_64::TIMES_4, 12));
-  GetAssembler()->popcntq(x86_64::CpuRegister(x86_64::RDI), x86_64::Address(
-      x86_64::CpuRegister(x86_64::RDI), x86_64::CpuRegister(x86_64::R9), x86_64::TIMES_4, 12));
-  const char* expected =
-    "popcntq 0xc(%RDI,%RBX,4), %R10\n"
-    "popcntq 0xc(%R10,%RBX,4), %RDI\n"
-    "popcntq 0xc(%RDI,%R9,4), %RDI\n";
-
-  DriverStr(expected, "popcntq_address");
-}
-
-TEST_F(AssemblerX86_64Test, CmovlAddress) {
-  GetAssembler()->cmov(x86_64::kEqual, x86_64::CpuRegister(x86_64::R10), x86_64::Address(
-      x86_64::CpuRegister(x86_64::RDI), x86_64::CpuRegister(x86_64::RBX), x86_64::TIMES_4, 12), false);
-  GetAssembler()->cmov(x86_64::kNotEqual, x86_64::CpuRegister(x86_64::RDI), x86_64::Address(
-      x86_64::CpuRegister(x86_64::R10), x86_64::CpuRegister(x86_64::RBX), x86_64::TIMES_4, 12), false);
-  GetAssembler()->cmov(x86_64::kEqual, x86_64::CpuRegister(x86_64::RDI), x86_64::Address(
-      x86_64::CpuRegister(x86_64::RDI), x86_64::CpuRegister(x86_64::R9), x86_64::TIMES_4, 12), false);
-  const char* expected =
-    "cmovzl 0xc(%RDI,%RBX,4), %R10d\n"
-    "cmovnzl 0xc(%R10,%RBX,4), %edi\n"
-    "cmovzl 0xc(%RDI,%R9,4), %edi\n";
-
-  DriverStr(expected, "cmovl_address");
-}
-
-TEST_F(AssemblerX86_64Test, CmovqAddress) {
-  GetAssembler()->cmov(x86_64::kEqual, x86_64::CpuRegister(x86_64::R10), x86_64::Address(
-      x86_64::CpuRegister(x86_64::RDI), x86_64::CpuRegister(x86_64::RBX), x86_64::TIMES_4, 12), true);
-  GetAssembler()->cmov(x86_64::kNotEqual, x86_64::CpuRegister(x86_64::RDI), x86_64::Address(
-      x86_64::CpuRegister(x86_64::R10), x86_64::CpuRegister(x86_64::RBX), x86_64::TIMES_4, 12), true);
-  GetAssembler()->cmov(x86_64::kEqual, x86_64::CpuRegister(x86_64::RDI), x86_64::Address(
-      x86_64::CpuRegister(x86_64::RDI), x86_64::CpuRegister(x86_64::R9), x86_64::TIMES_4, 12), true);
-  const char* expected =
-    "cmovzq 0xc(%RDI,%RBX,4), %R10\n"
-    "cmovnzq 0xc(%R10,%RBX,4), %rdi\n"
-    "cmovzq 0xc(%RDI,%R9,4), %rdi\n";
-
-  DriverStr(expected, "cmovq_address");
-}
-
-
 /////////////////
 // Near labels //
 /////////////////
@@ -1617,24 +1361,6 @@ TEST_F(AssemblerX86_64Test, Repnescasw) {
   GetAssembler()->repne_scasw();
   const char* expected = "repne scasw\n";
   DriverStr(expected, "Repnescasw");
-}
-
-TEST_F(AssemblerX86_64Test, Repecmpsw) {
-  GetAssembler()->repe_cmpsw();
-  const char* expected = "repe cmpsw\n";
-  DriverStr(expected, "Repecmpsw");
-}
-
-TEST_F(AssemblerX86_64Test, Repecmpsl) {
-  GetAssembler()->repe_cmpsl();
-  const char* expected = "repe cmpsl\n";
-  DriverStr(expected, "Repecmpsl");
-}
-
-TEST_F(AssemblerX86_64Test, Repecmpsq) {
-  GetAssembler()->repe_cmpsq();
-  const char* expected = "repe cmpsq\n";
-  DriverStr(expected, "Repecmpsq");
 }
 
 }  // namespace art

@@ -22,8 +22,6 @@ public class Main {
   class InnerClass {}
 
   public static void main(String[] args) throws Exception {
-    System.loadLibrary(args[0]);
-
     Class<?> c = Class.forName("PhiLiveness");
     Method m = c.getMethod("mergeOk", boolean.class, byte.class);
     m.invoke(null, new Boolean(true), new Byte((byte)2));
@@ -39,5 +37,9 @@ public class Main {
 
     m = c.getMethod("phiAllEquivalents", Main.class);
     m.invoke(null, new Main());
+  }
+
+  static {
+    System.loadLibrary("arttest");
   }
 }

@@ -12,6 +12,9 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Modified by Intel Corporation
+ *
  */
 
 #include "parsed_options.h"
@@ -41,13 +44,15 @@ ParsedOptions::ParsedOptions()
                                                     // Runtime::Abort
 }
 
-bool ParsedOptions::Parse(const RuntimeOptions& options,
-                          bool ignore_unrecognized,
-                          RuntimeArgumentMap* runtime_options) {
+ParsedOptions* ParsedOptions::Create(const RuntimeOptions& options, bool ignore_unrecognized,
+                                     RuntimeArgumentMap* runtime_options) {
   CHECK(runtime_options != nullptr);
 
-  ParsedOptions parser;
-  return parser.DoParse(options, ignore_unrecognized, runtime_options);
+  std::unique_ptr<ParsedOptions> parsed(new ParsedOptions());
+  if (parsed->Parse(options, ignore_unrecognized, runtime_options)) {
+    return parsed.release();
+  }
+  return nullptr;
 }
 
 using RuntimeParser = CmdlineParser<RuntimeArgumentMap, RuntimeArgumentMap::Key>;
@@ -117,9 +122,18 @@ std::unique_ptr<RuntimeParser> ParsedOptions::MakeParser(bool ignore_unrecognize
       .Define("-XX:ParallelGCThreads=_")
           .WithType<unsigned int>()
           .IntoKey(M::ParallelGCThreads)
-      .Define("-XX:ConcGCThreads=_")
+       .Define("-XX:ConcGCThreads=_")
           .WithType<unsigned int>()
           .IntoKey(M::ConcGCThreads)
+      .Define("-XX:FirstIterCopySize=_")
+          .WithType<unsigned int>()
+          .IntoKey(M::FirstIterCopySize)
+      .Define("-XX:ConcurrentGCCycleStart=_")
+          .WithType<unsigned int>()
+          .IntoKey(M::ConcurrentGCCycleStart)
+      .Define("-XX:ConcurrentGCStartFactor=_")
+          .WithType<unsigned int>()
+          .IntoKey(M::ConcurrentGCStartFactor)
       .Define("-Xss_")
           .WithType<Memory<1>>()
           .IntoKey(M::StackSize)
@@ -146,38 +160,16 @@ std::unique_ptr<RuntimeParser> ParsedOptions::MakeParser(bool ignore_unrecognize
       .Define({"-XX:EnableHSpaceCompactForOOM", "-XX:DisableHSpaceCompactForOOM"})
           .WithValues({true, false})
           .IntoKey(M::EnableHSpaceCompactForOOM)
-      .Define("-XX:DumpNativeStackOnSigQuit:_")
-          .WithType<bool>()
-          .WithValueMap({{"false", false}, {"true", true}})
-          .IntoKey(M::DumpNativeStackOnSigQuit)
       .Define("-Xusejit:_")
           .WithType<bool>()
           .WithValueMap({{"false", false}, {"true", true}})
-          .IntoKey(M::UseJitCompilation)
-      .Define("-Xjitinitialsize:_")
+          .IntoKey(M::UseJIT)
+      .Define("-Xjitcodecachesize:_")
           .WithType<MemoryKiB>()
-          .IntoKey(M::JITCodeCacheInitialCapacity)
-      .Define("-Xjitmaxsize:_")
-          .WithType<MemoryKiB>()
-          .IntoKey(M::JITCodeCacheMaxCapacity)
+          .IntoKey(M::JITCodeCacheCapacity)
       .Define("-Xjitthreshold:_")
           .WithType<unsigned int>()
           .IntoKey(M::JITCompileThreshold)
-      .Define("-Xjitwarmupthreshold:_")
-          .WithType<unsigned int>()
-          .IntoKey(M::JITWarmupThreshold)
-      .Define("-Xjitosrthreshold:_")
-          .WithType<unsigned int>()
-          .IntoKey(M::JITOsrThreshold)
-      .Define("-Xjitprithreadweight:_")
-          .WithType<unsigned int>()
-          .IntoKey(M::JITPriorityThreadWeight)
-      .Define("-Xjittransitionweight:_")
-          .WithType<unsigned int>()
-          .IntoKey(M::JITInvokeTransitionWeight)
-      .Define("-Xjitsaveprofilinginfo")
-          .WithValue(true)
-          .IntoKey(M::JITSaveProfilingInfo)
       .Define("-XX:HspaceCompactForOOMMinIntervalMs=_")  // in ms
           .WithType<MillisecondsToNanoseconds>()  // store as ns
           .IntoKey(M::HSpaceCompactForOOMMinIntervalsMs)
@@ -264,11 +256,10 @@ std::unique_ptr<RuntimeParser> ParsedOptions::MakeParser(bool ignore_unrecognize
           .AppendValues()
           .IntoKey(M::ImageCompilerOptions)
       .Define("-Xverify:_")
-          .WithType<verifier::VerifyMode>()
-          .WithValueMap({{"none",     verifier::VerifyMode::kNone},
-                         {"remote",   verifier::VerifyMode::kEnable},
-                         {"all",      verifier::VerifyMode::kEnable},
-                         {"softfail", verifier::VerifyMode::kSoftFail}})
+          .WithType<bool>()
+          .WithValueMap({{"none", false},
+                         {"remote", true},
+                         {"all", true}})
           .IntoKey(M::Verify)
       .Define("-XX:NativeBridge=_")
           .WithType<std::string>()
@@ -276,25 +267,30 @@ std::unique_ptr<RuntimeParser> ParsedOptions::MakeParser(bool ignore_unrecognize
       .Define("-Xzygote-max-boot-retry=_")
           .WithType<unsigned int>()
           .IntoKey(M::ZygoteMaxFailedBoots)
+      .Define("-Xjit-stress-mode")
+          .IntoKey(M::JitStressMode)
+      .Define("-Xjit-block-mode")
+          .IntoKey(M::JitBlockMode)
       .Define("-Xno-dex-file-fallback")
           .IntoKey(M::NoDexFileFallback)
-      .Define("-Xno-sig-chain")
-          .IntoKey(M::NoSigChain)
       .Define("--cpu-abilist=_")
           .WithType<std::string>()
           .IntoKey(M::CpuAbiList)
       .Define("-Xfingerprint:_")
           .WithType<std::string>()
           .IntoKey(M::Fingerprint)
-      .Define("-Xexperimental:_")
-          .WithType<ExperimentalFlags>()
-          .AppendValues()
-          .IntoKey(M::Experimental)
-      .Define("-Xforce-nb-testing")
-          .IntoKey(M::ForceNativeBridge)
-      .Define("-XOatFileManagerCompilerFilter:_")
+      .Define("-XX:GcProfile")
+          .WithValue(true)
+          .IntoKey(M::GcProfile)
+      .Define("-X:GcProfileDir:_")
           .WithType<std::string>()
-          .IntoKey(M::OatFileManagerCompilerFilter)
+          .IntoKey(M::GcProfileDir)
+      .Define("-XX:GcProfAlloc")
+          .WithValue(true)
+          .IntoKey(M::GcProfAlloc)
+      .Define("-XX:GcProfAtStart")
+          .WithValue(true)
+          .IntoKey(M::GcProfAtStart)
       .Ignore({
           "-ea", "-da", "-enableassertions", "-disableassertions", "--runtime-arg", "-esa",
           "-dsa", "-enablesystemassertions", "-disablesystemassertions", "-Xrs", "-Xint:_",
@@ -327,8 +323,8 @@ bool ParsedOptions::ProcessSpecialOptions(const RuntimeOptions& options,
     const std::string option(options[i].first);
       // TODO: support -Djava.class.path
     if (option == "bootclasspath") {
-      auto boot_class_path = static_cast<std::vector<std::unique_ptr<const DexFile>>*>(
-          const_cast<void*>(options[i].second));
+      auto boot_class_path
+          = reinterpret_cast<const std::vector<const DexFile*>*>(options[i].second);
 
       if (runtime_options != nullptr) {
         runtime_options->Set(M::BootClassPathDexList, boot_class_path);
@@ -403,31 +399,29 @@ bool ParsedOptions::ProcessSpecialOptions(const RuntimeOptions& options,
   return true;
 }
 
-// Intended for local changes only.
-static void MaybeOverrideVerbosity() {
+bool ParsedOptions::Parse(const RuntimeOptions& options, bool ignore_unrecognized,
+                          RuntimeArgumentMap* runtime_options) {
   //  gLogVerbosity.class_linker = true;  // TODO: don't check this in!
-  //  gLogVerbosity.collector = true;  // TODO: don't check this in!
   //  gLogVerbosity.compiler = true;  // TODO: don't check this in!
-  //  gLogVerbosity.deopt = true;  // TODO: don't check this in!
   //  gLogVerbosity.gc = true;  // TODO: don't check this in!
   //  gLogVerbosity.heap = true;  // TODO: don't check this in!
   //  gLogVerbosity.jdwp = true;  // TODO: don't check this in!
   //  gLogVerbosity.jit = true;  // TODO: don't check this in!
   //  gLogVerbosity.jni = true;  // TODO: don't check this in!
   //  gLogVerbosity.monitor = true;  // TODO: don't check this in!
-  //  gLogVerbosity.oat = true;  // TODO: don't check this in!
   //  gLogVerbosity.profiler = true;  // TODO: don't check this in!
   //  gLogVerbosity.signals = true;  // TODO: don't check this in!
-  //  gLogVerbosity.simulator = true; // TODO: don't check this in!
   //  gLogVerbosity.startup = true;  // TODO: don't check this in!
   //  gLogVerbosity.third_party_jni = true;  // TODO: don't check this in!
   //  gLogVerbosity.threads = true;  // TODO: don't check this in!
   //  gLogVerbosity.verifier = true;  // TODO: don't check this in!
-}
 
-bool ParsedOptions::DoParse(const RuntimeOptions& options,
-                            bool ignore_unrecognized,
-                            RuntimeArgumentMap* runtime_options) {
+  // Initialize Gc profiling parameters, turn off by default.
+  enable_gcprofile_ = false;
+  gcprofile_dir_ = "/data/local/tmp/gcprofile";
+  enable_succ_alloc_profile_ = false;
+  enable_gcprofile_at_start_ = false;
+
   for (size_t i = 0; i < options.size(); ++i) {
     if (true && options[0].first == "-Xzygote") {
       LOG(INFO) << "option[" << i << "]=" << options[i].first;
@@ -469,14 +463,14 @@ bool ParsedOptions::DoParse(const RuntimeOptions& options,
     return false;
   } else if (args.Exists(M::ShowVersion)) {
     UsageMessage(stdout, "ART version %s\n", Runtime::GetVersion());
+    UsageMessage(stdout, "Extension version %s\n", Runtime::GetArtExtensionVersion());
     Exit(0);
   } else if (args.Exists(M::BootClassPath)) {
     LOG(INFO) << "setting boot class path to " << *args.Get(M::BootClassPath);
   }
 
-  if (args.GetOrDefault(M::UseJitCompilation) && args.GetOrDefault(M::Interpret)) {
-    Usage("-Xusejit:true and -Xint cannot be specified together");
-    Exit(0);
+  if (args.Exists(M::JitStressMode)) {
+    args.Set(M::JITCompileThreshold, 1U);
   }
 
   // Set a default boot class path if we didn't get an explicit one via command line.
@@ -493,6 +487,16 @@ bool ParsedOptions::DoParse(const RuntimeOptions& options,
   args.SetIfMissing(M::ParallelGCThreads, gc::Heap::kDefaultEnableParallelGC ?
       static_cast<unsigned int>(sysconf(_SC_NPROCESSORS_CONF) - 1u) : 0u);
 
+  // Default to number of 5/8 processors minus one since the main GC thread also does work.
+  uint32_t nprocessors = sysconf(_SC_NPROCESSORS_CONF);
+  if (nprocessors > 1) {
+    args.SetIfMissing(M::ConcGCThreads,
+        static_cast<unsigned int>(nprocessors * 5 / 8 - 1u));
+  }
+
+  // Default Parallel copying first iteration task size is 10.
+    args.SetIfMissing(M::FirstIterCopySize, 10u);
+
   // -Xverbose:
   {
     LogVerbosity *log_verbosity = args.Get(M::Verbose);
@@ -500,8 +504,6 @@ bool ParsedOptions::DoParse(const RuntimeOptions& options,
       gLogVerbosity = *log_verbosity;
     }
   }
-
-  MaybeOverrideVerbosity();
 
   // -Xprofile:
   Trace::SetDefaultClockSource(args.GetOrDefault(M::ProfileClock));
@@ -534,6 +536,13 @@ bool ParsedOptions::DoParse(const RuntimeOptions& options,
       } else {
         background_collector_type_ = collector_type_;
       }
+    }
+
+    // If foregroud is SS/GSS, Enable Parallel GC.
+    if (collector_type_ == gc::kCollectorTypeGSS ||
+        collector_type_ == gc::kCollectorTypeSS) {
+        args.SetIfMissing(M::ParallelGCThreads,
+            static_cast<unsigned int>(sysconf(_SC_NPROCESSORS_CONF) - 1u) );
     }
 
     args.Set(M::BackgroundGc, BackgroundGcOption { background_collector_type_ });
@@ -589,11 +598,12 @@ bool ParsedOptions::DoParse(const RuntimeOptions& options,
     args.Set(M::HeapGrowthLimit, args.GetOrDefault(M::MemoryMaximumSize));
   }
 
-  if (args.GetOrDefault(M::Experimental) & ExperimentalFlags::kLambdas) {
-    LOG(WARNING) << "Experimental lambdas have been enabled. All lambda opcodes have "
-                 << "an unstable specification and are nearly guaranteed to change over time. "
-                 << "Do not attempt to write shipping code against these opcodes.";
+  // Disable GC ergonomics by default on SOFIA to reduce memory consumption.
+#ifdef SOFIA
+  if (args.GetOrDefault(M::ConcurrentGCCycleStart) == 0u) {
+    args.Set(M::ConcurrentGCCycleStart, 1u);
   }
+#endif
 
   *runtime_options = std::move(args);
   return true;
@@ -665,6 +675,7 @@ void ParsedOptions::Usage(const char* fmt, ...) {
   UsageMessage(stream, "  -XX:ForegroundHeapGrowthMultiplier=doublevalue\n");
   UsageMessage(stream, "  -XX:LowMemoryMode\n");
   UsageMessage(stream, "  -Xprofile:{threadcpuclock,wallclock,dualclock}\n");
+  UsageMessage(stream, "  -Xjitcodecachesize:N\n");
   UsageMessage(stream, "  -Xjitthreshold:integervalue\n");
   UsageMessage(stream, "\n");
 
@@ -679,6 +690,8 @@ void ParsedOptions::Usage(const char* fmt, ...) {
   UsageMessage(stream, "  -XX:+DisableExplicitGC\n");
   UsageMessage(stream, "  -XX:ParallelGCThreads=integervalue\n");
   UsageMessage(stream, "  -XX:ConcGCThreads=integervalue\n");
+  UsageMessage(stream, "  -XX:ConcurrentGCCycleStart={0,1}\n");
+  UsageMessage(stream, "  -XX:ConcurrentGCStartFactor=integervalue\n");
   UsageMessage(stream, "  -XX:MaxSpinsBeforeThinLockInflation=integervalue\n");
   UsageMessage(stream, "  -XX:LongPauseLogThreshold=integervalue\n");
   UsageMessage(stream, "  -XX:LongGCLogThreshold=integervalue\n");
@@ -689,7 +702,6 @@ void ParsedOptions::Usage(const char* fmt, ...) {
   UsageMessage(stream, "  -XX:BackgroundGC=none\n");
   UsageMessage(stream, "  -XX:LargeObjectSpace={disabled,map,freelist}\n");
   UsageMessage(stream, "  -XX:LargeObjectThreshold=N\n");
-  UsageMessage(stream, "  -XX:DumpNativeStackOnSigQuit=booleanvalue\n");
   UsageMessage(stream, "  -Xmethod-trace\n");
   UsageMessage(stream, "  -Xmethod-trace-file:filename");
   UsageMessage(stream, "  -Xmethod-trace-file-size:integervalue\n");
@@ -709,18 +721,11 @@ void ParsedOptions::Usage(const char* fmt, ...) {
   UsageMessage(stream, "  -Ximage-compiler-option dex2oat-option\n");
   UsageMessage(stream, "  -Xpatchoat:filename\n");
   UsageMessage(stream, "  -Xusejit:booleanvalue\n");
-  UsageMessage(stream, "  -Xjitinitialsize:N\n");
-  UsageMessage(stream, "  -Xjitmaxsize:N\n");
-  UsageMessage(stream, "  -Xjitwarmupthreshold:integervalue\n");
-  UsageMessage(stream, "  -Xjitosrthreshold:integervalue\n");
-  UsageMessage(stream, "  -Xjitprithreadweight:integervalue\n");
   UsageMessage(stream, "  -X[no]relocate\n");
   UsageMessage(stream, "  -X[no]dex2oat (Whether to invoke dex2oat on the application)\n");
   UsageMessage(stream, "  -X[no]image-dex2oat (Whether to create and use a boot image)\n");
   UsageMessage(stream, "  -Xno-dex-file-fallback "
                        "(Don't fall back to dex files without oat files)\n");
-  UsageMessage(stream, "  -Xexperimental:lambdas "
-                       "(Enable new and experimental dalvik opcodes and semantics)\n");
   UsageMessage(stream, "\n");
 
   UsageMessage(stream, "The following previously supported Dalvik options are ignored:\n");
@@ -730,7 +735,7 @@ void ParsedOptions::Usage(const char* fmt, ...) {
   UsageMessage(stream, "  -esa\n");
   UsageMessage(stream, "  -dsa\n");
   UsageMessage(stream, "   (-enablesystemassertions, -disablesystemassertions)\n");
-  UsageMessage(stream, "  -Xverify:{none,remote,all,softfail}\n");
+  UsageMessage(stream, "  -Xverify:{none,remote,all}\n");
   UsageMessage(stream, "  -Xrs\n");
   UsageMessage(stream, "  -Xint:portable, -Xint:fast, -Xint:jit\n");
   UsageMessage(stream, "  -Xdexopt:{none,verified,all,full}\n");
@@ -748,7 +753,6 @@ void ParsedOptions::Usage(const char* fmt, ...) {
   UsageMessage(stream, "  -Xjitblocking\n");
   UsageMessage(stream, "  -Xjitmethod:signature[,signature]* (eg Ljava/lang/String\\;replace)\n");
   UsageMessage(stream, "  -Xjitclass:classname[,classname]*\n");
-  UsageMessage(stream, "  -Xjitcodecachesize:N\n");
   UsageMessage(stream, "  -Xjitoffset:offset[,offset]\n");
   UsageMessage(stream, "  -Xjitconfig:filename\n");
   UsageMessage(stream, "  -Xjitcheckcg\n");
@@ -757,6 +761,10 @@ void ParsedOptions::Usage(const char* fmt, ...) {
   UsageMessage(stream, "  -Xjitdisableopt\n");
   UsageMessage(stream, "  -Xjitsuspendpoll\n");
   UsageMessage(stream, "  -XX:mainThreadStackSize=N\n");
+  UsageMessage(stream, "  -XX:GcProfile\n");
+  UsageMessage(stream, "  -XGcProfileDir:dirname\n");
+  UsageMessage(stream, "  -XX:GcProfAlloc\n");
+  UsageMessage(stream, "  -XX:GcProfAtStart\n");
   UsageMessage(stream, "\n");
 
   Exit((error) ? 1 : 0);

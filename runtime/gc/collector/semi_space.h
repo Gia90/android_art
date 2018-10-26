@@ -25,7 +25,7 @@
 #include "garbage_collector.h"
 #include "gc_root.h"
 #include "gc/accounting/heap_bitmap.h"
-#include "immune_spaces.h"
+#include "immune_region.h"
 #include "mirror/object_reference.h"
 #include "object_callbacks.h"
 #include "offsets.h"
@@ -66,13 +66,13 @@ class SemiSpace : public GarbageCollector {
 
   virtual void RunPhases() OVERRIDE NO_THREAD_SAFETY_ANALYSIS;
   virtual void InitializePhase();
-  virtual void MarkingPhase() REQUIRES(Locks::mutator_lock_)
-      REQUIRES(!Locks::heap_bitmap_lock_);
-  virtual void ReclaimPhase() REQUIRES(Locks::mutator_lock_)
-      REQUIRES(!Locks::heap_bitmap_lock_);
-  virtual void FinishPhase() REQUIRES(Locks::mutator_lock_);
+  virtual void MarkingPhase() EXCLUSIVE_LOCKS_REQUIRED(Locks::mutator_lock_)
+      LOCKS_EXCLUDED(Locks::heap_bitmap_lock_);
+  virtual void ReclaimPhase() EXCLUSIVE_LOCKS_REQUIRED(Locks::mutator_lock_)
+      LOCKS_EXCLUDED(Locks::heap_bitmap_lock_);
+  virtual void FinishPhase() EXCLUSIVE_LOCKS_REQUIRED(Locks::mutator_lock_);
   void MarkReachableObjects()
-      REQUIRES(Locks::mutator_lock_, Locks::heap_bitmap_lock_);
+      EXCLUSIVE_LOCKS_REQUIRED(Locks::mutator_lock_, Locks::heap_bitmap_lock_);
   virtual GcType GetGcType() const OVERRIDE {
     return kGcTypePartial;
   }
@@ -86,6 +86,14 @@ class SemiSpace : public GarbageCollector {
   // Set the space where we copy objects from.
   void SetFromSpace(space::ContinuousMemMapAllocSpace* from_space);
 
+  // Get from space.
+  space::ContinuousMemMapAllocSpace* GetFromSpace();
+  // Get to space.
+  space::ContinuousMemMapAllocSpace* GetToSpace();
+  // Get promote space.
+  space::ContinuousMemMapAllocSpace* GetPromoSpace();
+  // Used by parallel copying task to determine the promoted space.
+  bool IsCollectFromSpaceOnly();
   // Set whether or not we swap the semi spaces in the heap. This needs to be done with mutators
   // suspended.
   void SetSwapSemiSpaces(bool swap_semi_spaces) {
@@ -101,110 +109,154 @@ class SemiSpace : public GarbageCollector {
   // Updates obj_ptr if the object has moved.
   template<bool kPoisonReferences>
   void MarkObject(mirror::ObjectReference<kPoisonReferences, mirror::Object>* obj_ptr)
-      REQUIRES(Locks::heap_bitmap_lock_, Locks::mutator_lock_);
+      EXCLUSIVE_LOCKS_REQUIRED(Locks::heap_bitmap_lock_, Locks::mutator_lock_);
+  // Used to fill a memory block when updating the forwarding pointer fails.
+  ALWAYS_INLINE void FillWithDummyObject(mirror::Object* dummy_obj, size_t byte_size)
+      SHARED_LOCKS_REQUIRED(Locks::mutator_lock_);
 
-  template<bool kPoisonReferences>
-  void MarkObjectIfNotInToSpace(mirror::ObjectReference<kPoisonReferences, mirror::Object>* obj_ptr)
-      REQUIRES(Locks::heap_bitmap_lock_, Locks::mutator_lock_);
+  mirror::Object* TryInstallForwardingAddress(mirror::Object* obj,
+                                              space::ContinuousMemMapAllocSpace* dest_space,
+                                              size_t* bytes_allocated,
+                                              bool* win) ALWAYS_INLINE
+      SHARED_LOCKS_REQUIRED(Locks::mutator_lock_);
 
-  virtual mirror::Object* MarkObject(mirror::Object* root) OVERRIDE
-      REQUIRES(Locks::heap_bitmap_lock_, Locks::mutator_lock_);
-
-  virtual void MarkHeapReference(mirror::HeapReference<mirror::Object>* obj_ptr) OVERRIDE
-      REQUIRES(Locks::heap_bitmap_lock_, Locks::mutator_lock_);
+  template<bool kPoisonReference>
+  void MarkParallel(mirror::ObjectReference<kPoisonReference,
+                    mirror::Object>* obj_ptr,
+                    void* task) ALWAYS_INLINE
+      SHARED_LOCKS_REQUIRED(Locks::mutator_lock_)
+      EXCLUSIVE_LOCKS_REQUIRED(Locks::heap_bitmap_lock_);
 
   void ScanObject(mirror::Object* obj)
-      REQUIRES(Locks::heap_bitmap_lock_, Locks::mutator_lock_);
+      EXCLUSIVE_LOCKS_REQUIRED(Locks::heap_bitmap_lock_, Locks::mutator_lock_);
 
   void VerifyNoFromSpaceReferences(mirror::Object* obj)
-      SHARED_REQUIRES(Locks::heap_bitmap_lock_, Locks::mutator_lock_);
+      SHARED_LOCKS_REQUIRED(Locks::heap_bitmap_lock_, Locks::mutator_lock_);
 
   // Marks the root set at the start of a garbage collection.
   void MarkRoots()
-      REQUIRES(Locks::heap_bitmap_lock_, Locks::mutator_lock_);
+      EXCLUSIVE_LOCKS_REQUIRED(Locks::heap_bitmap_lock_, Locks::mutator_lock_);
 
   // Bind the live bits to the mark bits of bitmaps for spaces that are never collected, ie
   // the image. Mark that portion of the heap as immune.
-  virtual void BindBitmaps() SHARED_REQUIRES(Locks::mutator_lock_)
-      REQUIRES(!Locks::heap_bitmap_lock_);
+  virtual void BindBitmaps() SHARED_LOCKS_REQUIRED(Locks::mutator_lock_)
+      LOCKS_EXCLUDED(Locks::heap_bitmap_lock_);
 
   void UnBindBitmaps()
-      REQUIRES(Locks::heap_bitmap_lock_);
+      EXCLUSIVE_LOCKS_REQUIRED(Locks::heap_bitmap_lock_);
 
-  void ProcessReferences(Thread* self) REQUIRES(Locks::mutator_lock_)
-      REQUIRES(Locks::mutator_lock_);
-
-  // Sweeps unmarked objects to complete the garbage collection.
-  virtual void Sweep(bool swap_bitmaps)
-      REQUIRES(Locks::heap_bitmap_lock_)
-      SHARED_REQUIRES(Locks::mutator_lock_);
+  void ProcessReferences(Thread* self) EXCLUSIVE_LOCKS_REQUIRED(Locks::mutator_lock_)
+      EXCLUSIVE_LOCKS_REQUIRED(Locks::mutator_lock_);
 
   // Sweeps unmarked objects to complete the garbage collection.
-  void SweepLargeObjects(bool swap_bitmaps) REQUIRES(Locks::heap_bitmap_lock_);
+  virtual void Sweep(bool swap_bitmaps) EXCLUSIVE_LOCKS_REQUIRED(Locks::heap_bitmap_lock_);
+
+  // Sweeps unmarked objects to complete the garbage collection.
+  void SweepLargeObjects(bool swap_bitmaps) EXCLUSIVE_LOCKS_REQUIRED(Locks::heap_bitmap_lock_);
 
   void SweepSystemWeaks()
-      SHARED_REQUIRES(Locks::heap_bitmap_lock_, Locks::mutator_lock_);
+      SHARED_LOCKS_REQUIRED(Locks::heap_bitmap_lock_, Locks::mutator_lock_);
 
   virtual void VisitRoots(mirror::Object*** roots, size_t count, const RootInfo& info) OVERRIDE
-      REQUIRES(Locks::mutator_lock_, Locks::heap_bitmap_lock_);
+      EXCLUSIVE_LOCKS_REQUIRED(Locks::mutator_lock_, Locks::heap_bitmap_lock_);
 
   virtual void VisitRoots(mirror::CompressedReference<mirror::Object>** roots, size_t count,
                           const RootInfo& info) OVERRIDE
-      REQUIRES(Locks::mutator_lock_, Locks::heap_bitmap_lock_);
+      EXCLUSIVE_LOCKS_REQUIRED(Locks::mutator_lock_, Locks::heap_bitmap_lock_);
+
+  static mirror::Object* MarkObjectCallback(mirror::Object* root, void* arg)
+      EXCLUSIVE_LOCKS_REQUIRED(Locks::heap_bitmap_lock_, Locks::mutator_lock_);
+
+  static void MarkHeapReferenceCallback(mirror::HeapReference<mirror::Object>* obj_ptr, void* arg)
+      EXCLUSIVE_LOCKS_REQUIRED(Locks::heap_bitmap_lock_, Locks::mutator_lock_);
+
+  static void ProcessMarkStackCallback(void* arg)
+      EXCLUSIVE_LOCKS_REQUIRED(Locks::mutator_lock_, Locks::heap_bitmap_lock_);
+
+  static void DelayReferenceReferentCallback(mirror::Class* klass, mirror::Reference* ref,
+                                             void* arg)
+      SHARED_LOCKS_REQUIRED(Locks::heap_bitmap_lock_, Locks::mutator_lock_);
 
   virtual mirror::Object* MarkNonForwardedObject(mirror::Object* obj)
-      REQUIRES(Locks::heap_bitmap_lock_, Locks::mutator_lock_);
+      EXCLUSIVE_LOCKS_REQUIRED(Locks::heap_bitmap_lock_, Locks::mutator_lock_);
+
+  virtual mirror::Object* MarkNonForwardedObjectParallel(mirror::Object* obj,
+                                                         bool* win,
+                                                         void* task)
+      SHARED_LOCKS_REQUIRED(Locks::heap_bitmap_lock_, Locks::mutator_lock_);
 
   // Schedules an unmarked object for reference processing.
   void DelayReferenceReferent(mirror::Class* klass, mirror::Reference* reference)
-      SHARED_REQUIRES(Locks::heap_bitmap_lock_, Locks::mutator_lock_);
+      SHARED_LOCKS_REQUIRED(Locks::heap_bitmap_lock_, Locks::mutator_lock_);
+
+  template<typename MarkVisitor, typename ReferenceVisitor>
+  ALWAYS_INLINE void ScanObjectVisit(mirror::Object* obj, const MarkVisitor& visitor,
+                                    const ReferenceVisitor& ref_visitor)
+      SHARED_LOCKS_REQUIRED(Locks::heap_bitmap_lock_, Locks::mutator_lock_);
+
+  AtomicInteger work_chunks_created_;
+  AtomicInteger work_chunks_deleted_;
 
  protected:
   // Returns null if the object is not marked, otherwise returns the forwarding address (same as
   // object for non movable things).
-  virtual mirror::Object* IsMarked(mirror::Object* object) OVERRIDE
-      REQUIRES(Locks::mutator_lock_)
-      SHARED_REQUIRES(Locks::heap_bitmap_lock_);
+  mirror::Object* GetMarkedForwardAddress(mirror::Object* object) const
+      EXCLUSIVE_LOCKS_REQUIRED(Locks::mutator_lock_)
+      SHARED_LOCKS_REQUIRED(Locks::heap_bitmap_lock_);
 
-  virtual bool IsMarkedHeapReference(mirror::HeapReference<mirror::Object>* object) OVERRIDE
-      REQUIRES(Locks::mutator_lock_)
-      SHARED_REQUIRES(Locks::heap_bitmap_lock_);
+  static bool HeapReferenceMarkedCallback(mirror::HeapReference<mirror::Object>* object, void* arg)
+      EXCLUSIVE_LOCKS_REQUIRED(Locks::mutator_lock_)
+      SHARED_LOCKS_REQUIRED(Locks::heap_bitmap_lock_);
+
+  static mirror::Object* MarkedForwardingAddressCallback(mirror::Object* object, void* arg)
+      EXCLUSIVE_LOCKS_REQUIRED(Locks::mutator_lock_)
+      SHARED_LOCKS_REQUIRED(Locks::heap_bitmap_lock_);
 
   // Marks or unmarks a large object based on whether or not set is true. If set is true, then we
   // mark, otherwise we unmark.
   bool MarkLargeObject(const mirror::Object* obj)
-      REQUIRES(Locks::heap_bitmap_lock_)
-      SHARED_REQUIRES(Locks::mutator_lock_);
+      EXCLUSIVE_LOCKS_REQUIRED(Locks::heap_bitmap_lock_)
+      SHARED_LOCKS_REQUIRED(Locks::mutator_lock_);
 
   // Expand mark stack to 2x its current size.
-  void ResizeMarkStack(size_t new_size) SHARED_REQUIRES(Locks::mutator_lock_);
+  void ResizeMarkStack(size_t new_size) SHARED_LOCKS_REQUIRED(Locks::mutator_lock_);
 
   // Returns true if we should sweep the space.
   virtual bool ShouldSweepSpace(space::ContinuousSpace* space) const;
 
   // Push an object onto the mark stack.
-  void MarkStackPush(mirror::Object* obj) SHARED_REQUIRES(Locks::mutator_lock_);
+  void MarkStackPush(mirror::Object* obj) SHARED_LOCKS_REQUIRED(Locks::mutator_lock_);
 
   void UpdateAndMarkModUnion()
-      REQUIRES(Locks::heap_bitmap_lock_)
-      SHARED_REQUIRES(Locks::mutator_lock_);
+      EXCLUSIVE_LOCKS_REQUIRED(Locks::heap_bitmap_lock_)
+      SHARED_LOCKS_REQUIRED(Locks::mutator_lock_);
 
   // Recursively blackens objects on the mark stack.
   void ProcessMarkStack()
-      REQUIRES(Locks::mutator_lock_, Locks::heap_bitmap_lock_);
+      EXCLUSIVE_LOCKS_REQUIRED(Locks::mutator_lock_, Locks::heap_bitmap_lock_);
 
   inline mirror::Object* GetForwardingAddressInFromSpace(mirror::Object* obj) const
-      SHARED_REQUIRES(Locks::mutator_lock_);
+      SHARED_LOCKS_REQUIRED(Locks::mutator_lock_);
 
+  inline bool IsMarked(mirror::Object* obj)
+      SHARED_LOCKS_REQUIRED(Locks::mutator_lock_, Locks::heap_bitmap_lock_);
   // Revoke all the thread-local buffers.
   void RevokeAllThreadLocalBuffers();
+  // Get the first iteration copy task size.
+  size_t GetFirstIterCopySize() const;
+  // Get thread count for parallel copy.
+  size_t GetThreadCount() const;
+
+  // Process the mark stack parallel.
+  void ProcessMarkStackParallel(size_t thread_count)
+      EXCLUSIVE_LOCKS_REQUIRED(Locks::mutator_lock_, Locks::heap_bitmap_lock_);
 
   // Current space, we check this space first to avoid searching for the appropriate space for an
   // object.
   accounting::ObjectStack* mark_stack_;
 
-  // Every object inside the immune spaces is assumed to be marked.
-  ImmuneSpaces immune_spaces_;
+  // Immune region, every object inside the immune region is assumed to be marked.
+  ImmuneRegion immune_region_;
 
   // If true, the large object space is immune.
   bool is_large_object_space_immune_;
@@ -233,6 +285,7 @@ class SemiSpace : public GarbageCollector {
   // of how many bytes of objects have been copied so far from the
   // bump pointer space to the non-moving space.
   uint64_t bytes_promoted_;
+  uint64_t bytes_wasted_;
 
   // Used for the generational mode. Keeps track of how many bytes of
   // objects have been copied so far from the bump pointer space to
@@ -271,10 +324,21 @@ class SemiSpace : public GarbageCollector {
   // Whether or not we swap the semi spaces in the heap during the marking phase.
   bool swap_semi_spaces_;
 
+  Atomic<size_t> bytes_promoted_parallel_;
+  Atomic<size_t> bytes_wasted_promoted_parallel_;
+  Atomic<size_t> objects_promoted_parallel_;
+  Atomic<size_t> objects_moved_parallel_;
+  Atomic<size_t> bytes_moved_parallel_;
+  Atomic<size_t> dummy_bytes_;
+  Atomic<size_t> dummy_objects_;
+  Atomic<size_t> fallback_bytes_parallel_;
+  Atomic<size_t> fallback_objects_parallel_;
+  Atomic<size_t> wasted_bytes_;
+
  private:
-  class BitmapSetSlowPathVisitor;
-  class MarkObjectVisitor;
-  class VerifyNoFromSpaceReferencesVisitor;
+  friend class BitmapSetSlowPathVisitor;
+  friend class SSBitmapSetSlowPathVisitor;
+  friend class MarkStackCopyTask;
   DISALLOW_IMPLICIT_CONSTRUCTORS(SemiSpace);
 };
 

@@ -12,9 +12,12 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Modified by Intel Corporation
+ *
  */
 
-#ifdef __ANDROID__
+#ifdef HAVE_ANDROID_OS
 #include <android/log.h>
 #else
 #include <stdarg.h>
@@ -103,7 +106,7 @@ static void log(const char* format, ...) {
   va_list ap;
   va_start(ap, format);
   vsnprintf(buf, sizeof(buf), format, ap);
-#ifdef __ANDROID__
+#ifdef HAVE_ANDROID_OS
   __android_log_write(ANDROID_LOG_ERROR, "libsigchain", buf);
 #else
   std::cout << buf << "\n";

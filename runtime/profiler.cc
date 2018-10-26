@@ -28,6 +28,7 @@
 #include "base/unix_file/fd_file.h"
 #include "class_linker.h"
 #include "common_throws.h"
+#include "debugger.h"
 #include "dex_file-inl.h"
 #include "instrumentation.h"
 #include "mirror/class-inl.h"
@@ -57,15 +58,14 @@ volatile bool BackgroundMethodSamplingProfiler::shutting_down_ = false;
 class BoundedStackVisitor : public StackVisitor {
  public:
   BoundedStackVisitor(std::vector<std::pair<ArtMethod*, uint32_t>>* stack,
-                      Thread* thread,
-                      uint32_t max_depth)
-      SHARED_REQUIRES(Locks::mutator_lock_)
+      Thread* thread, uint32_t max_depth)
+      SHARED_LOCKS_REQUIRED(Locks::mutator_lock_)
       : StackVisitor(thread, nullptr, StackVisitor::StackWalkKind::kIncludeInlinedFrames),
         stack_(stack),
         max_depth_(max_depth),
         depth_(0) {}
 
-  bool VisitFrame() SHARED_REQUIRES(Locks::mutator_lock_) {
+  bool VisitFrame() SHARED_LOCKS_REQUIRED(Locks::mutator_lock_) {
     ArtMethod* m = GetMethod();
     if (m->IsRuntimeMethod()) {
       return true;
@@ -81,16 +81,14 @@ class BoundedStackVisitor : public StackVisitor {
   }
 
  private:
-  std::vector<std::pair<ArtMethod*, uint32_t>>* const stack_;
+  std::vector<std::pair<ArtMethod*, uint32_t>>* stack_;
   const uint32_t max_depth_;
   uint32_t depth_;
-
-  DISALLOW_COPY_AND_ASSIGN(BoundedStackVisitor);
 };
 
 // This is called from either a thread list traversal or from a checkpoint.  Regardless
 // of which caller, the mutator lock must be held.
-static void GetSample(Thread* thread, void* arg) SHARED_REQUIRES(Locks::mutator_lock_) {
+static void GetSample(Thread* thread, void* arg) SHARED_LOCKS_REQUIRED(Locks::mutator_lock_) {
   BackgroundMethodSamplingProfiler* profiler =
       reinterpret_cast<BackgroundMethodSamplingProfiler*>(arg);
   const ProfilerOptions profile_options = profiler->GetProfilerOptions();
@@ -306,9 +304,7 @@ uint32_t BackgroundMethodSamplingProfiler::WriteProfile() {
   } while (length > 0);
 
   // Truncate the file to the new length.
-  if (ftruncate(fd, full_length) == -1) {
-    LOG(ERROR) << "Failed to truncate profile file " << full_name;
-  }
+  ftruncate(fd, full_length);
 
   // Now unlock the file, allowing another process in.
   err = flock(fd, LOCK_UN);
@@ -470,14 +466,9 @@ uint32_t BackgroundMethodSamplingProfiler::DumpProfile(std::ostream& os) {
 // Profile Table.
 // This holds a mapping of ArtMethod* to a count of how many times a sample
 // hit it at the top of the stack.
-ProfileSampleResults::ProfileSampleResults(Mutex& lock)
-    : lock_(lock),
-      num_samples_(0U),
-      num_null_methods_(0U),
-      num_boot_methods_(0U),
-      previous_num_samples_(0U),
-      previous_num_null_methods_(0U),
-      previous_num_boot_methods_(0U) {
+ProfileSampleResults::ProfileSampleResults(Mutex& lock) : lock_(lock), num_samples_(0),
+    num_null_methods_(0),
+    num_boot_methods_(0) {
   for (int i = 0; i < kHashSize; i++) {
     table[i] = nullptr;
   }

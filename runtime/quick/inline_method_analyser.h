@@ -12,6 +12,9 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Modified by Intel Corporation
+ *
  */
 
 #ifndef ART_RUNTIME_QUICK_INLINE_METHOD_ANALYSER_H_
@@ -37,23 +40,8 @@ class MethodVerifier;
 enum InlineMethodOpcode : uint16_t {
   kIntrinsicDoubleCvt,
   kIntrinsicFloatCvt,
-  kIntrinsicFloat2Int,
-  kIntrinsicDouble2Long,
-  kIntrinsicFloatIsInfinite,
-  kIntrinsicDoubleIsInfinite,
-  kIntrinsicFloatIsNaN,
-  kIntrinsicDoubleIsNaN,
   kIntrinsicReverseBits,
   kIntrinsicReverseBytes,
-  kIntrinsicBitCount,
-  kIntrinsicCompare,
-  kIntrinsicHighestOneBit,
-  kIntrinsicLowestOneBit,
-  kIntrinsicNumberOfLeadingZeros,
-  kIntrinsicNumberOfTrailingZeros,
-  kIntrinsicRotateRight,
-  kIntrinsicRotateLeft,
-  kIntrinsicSignum,
   kIntrinsicAbsInt,
   kIntrinsicAbsLong,
   kIntrinsicAbsFloat,
@@ -88,7 +76,6 @@ enum InlineMethodOpcode : uint16_t {
   kIntrinsicReferenceGetReferent,
   kIntrinsicCharAt,
   kIntrinsicCompareTo,
-  kIntrinsicEquals,
   kIntrinsicGetCharsNoCheck,
   kIntrinsicIsEmptyOrLength,
   kIntrinsicIndexOf,
@@ -101,26 +88,13 @@ enum InlineMethodOpcode : uint16_t {
   kIntrinsicCas,
   kIntrinsicUnsafeGet,
   kIntrinsicUnsafePut,
-
-  // 1.8.
-  kIntrinsicUnsafeGetAndAddInt,
-  kIntrinsicUnsafeGetAndAddLong,
-  kIntrinsicUnsafeGetAndSetInt,
-  kIntrinsicUnsafeGetAndSetLong,
-  kIntrinsicUnsafeGetAndSetObject,
-  kIntrinsicUnsafeLoadFence,
-  kIntrinsicUnsafeStoreFence,
-  kIntrinsicUnsafeFullFence,
-
   kIntrinsicSystemArrayCopyCharArray,
-  kIntrinsicSystemArrayCopy,
 
   kInlineOpNop,
   kInlineOpReturnArg,
   kInlineOpNonWideConst,
   kInlineOpIGet,
   kInlineOpIPut,
-  kInlineOpConstructor,
   kInlineStringInit,
 };
 std::ostream& operator<<(std::ostream& os, const InlineMethodOpcode& rhs);
@@ -182,19 +156,6 @@ struct InlineReturnArgData {
 static_assert(sizeof(InlineReturnArgData) == sizeof(uint64_t),
               "Invalid size of InlineReturnArgData");
 
-struct InlineConstructorData {
-  // There can be up to 3 IPUTs, unused fields are marked with kNoDexIndex16.
-  uint16_t iput0_field_index;
-  uint16_t iput1_field_index;
-  uint16_t iput2_field_index;
-  uint16_t iput0_arg : 4;
-  uint16_t iput1_arg : 4;
-  uint16_t iput2_arg : 4;
-  uint16_t reserved : 4;
-};
-static_assert(sizeof(InlineConstructorData) == sizeof(uint64_t),
-              "Invalid size of InlineConstructorData");
-
 struct InlineMethod {
   InlineMethodOpcode opcode;
   InlineMethodFlags flags;
@@ -202,7 +163,6 @@ struct InlineMethod {
     uint64_t data;
     InlineIGetIPutData ifield_data;
     InlineReturnArgData return_data;
-    InlineConstructorData constructor_data;
   } d;
 };
 
@@ -216,10 +176,8 @@ class InlineMethodAnalyser {
    * @param method placeholder for the inline method data.
    * @return true if the method is a candidate for inlining, false otherwise.
    */
-  static bool AnalyseMethodCode(verifier::MethodVerifier* verifier, InlineMethod* result)
-      SHARED_REQUIRES(Locks::mutator_lock_);
-  static bool AnalyseMethodCode(ArtMethod* method, InlineMethod* result)
-      SHARED_REQUIRES(Locks::mutator_lock_);
+  static bool AnalyseMethodCode(verifier::MethodVerifier* verifier, InlineMethod* method)
+      SHARED_LOCKS_REQUIRED(Locks::mutator_lock_);
 
   static constexpr bool IsInstructionIGet(Instruction::Code opcode) {
     return Instruction::IGET <= opcode && opcode <= Instruction::IGET_SHORT;
@@ -241,34 +199,19 @@ class InlineMethodAnalyser {
   static bool IsSyntheticAccessor(MethodReference ref);
 
  private:
-  static bool AnalyseMethodCode(const DexFile::CodeItem* code_item,
-                                const MethodReference& method_ref,
-                                bool is_static,
-                                ArtMethod* method,
-                                InlineMethod* result)
-      SHARED_REQUIRES(Locks::mutator_lock_);
   static bool AnalyseReturnMethod(const DexFile::CodeItem* code_item, InlineMethod* result);
   static bool AnalyseConstMethod(const DexFile::CodeItem* code_item, InlineMethod* result);
-  static bool AnalyseIGetMethod(const DexFile::CodeItem* code_item,
-                                const MethodReference& method_ref,
-                                bool is_static,
-                                ArtMethod* method,
-                                InlineMethod* result)
-      SHARED_REQUIRES(Locks::mutator_lock_);
-  static bool AnalyseIPutMethod(const DexFile::CodeItem* code_item,
-                                const MethodReference& method_ref,
-                                bool is_static,
-                                ArtMethod* method,
-                                InlineMethod* result)
-      SHARED_REQUIRES(Locks::mutator_lock_);
+  static bool AnalyseIGetMethod(verifier::MethodVerifier* verifier, InlineMethod* result)
+      SHARED_LOCKS_REQUIRED(Locks::mutator_lock_);
+  static bool AnalyseIPutMethod(verifier::MethodVerifier* verifier, InlineMethod* result)
+      SHARED_LOCKS_REQUIRED(Locks::mutator_lock_);
 
   // Can we fast path instance field access in a verified accessor?
   // If yes, computes field's offset and volatility and whether the method is static or not.
-  static bool ComputeSpecialAccessorInfo(ArtMethod* method,
-                                         uint32_t field_idx,
-                                         bool is_put,
+  static bool ComputeSpecialAccessorInfo(uint32_t field_idx, bool is_put,
+                                         verifier::MethodVerifier* verifier,
                                          InlineIGetIPutData* result)
-      SHARED_REQUIRES(Locks::mutator_lock_);
+      SHARED_LOCKS_REQUIRED(Locks::mutator_lock_);
 };
 
 }  // namespace art

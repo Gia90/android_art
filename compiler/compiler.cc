@@ -17,6 +17,7 @@
 #include "compiler.h"
 
 #include "base/logging.h"
+#include "dex/quick/quick_compiler_factory.h"
 #include "driver/compiler_driver.h"
 #include "optimizing/optimizing_compiler.h"
 #include "utils.h"
@@ -26,7 +27,8 @@ namespace art {
 Compiler* Compiler::Create(CompilerDriver* driver, Compiler::Kind kind) {
   switch (kind) {
     case kQuick:
-      // TODO: Remove Quick in options.
+      return CreateQuickCompiler(driver);
+
     case kOptimizing:
       return CreateOptimizingCompiler(driver);
 

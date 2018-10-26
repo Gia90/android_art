@@ -12,6 +12,9 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Modified by Intel Corporation
+ *
  */
 
 /**
@@ -143,6 +146,79 @@ public class Compare {
             Main.assertTrue(false);
     }
 
+    /*
+     * Test cmpl-float and cmpg-float
+     * for a constant and NAN.
+     */
+    static void testFloatCompareConstNan(float nan) {
+        final float e = 2.72f;
+        final float ne = -e;
+        System.out.println("IntMath.testFloatCompareConstNan");
+
+        if (e <= nan)
+            Main.assertTrue(false);
+        if (e >= nan)
+            Main.assertTrue(false);
+        if (e <= nan)
+            Main.assertTrue(false);
+        if (e >= nan)
+            Main.assertTrue(false);
+        if (e == nan)
+            Main.assertTrue(false);
+        if (e != nan)
+            Main.assertTrue(true);
+        else
+            Main.assertTrue(false);
+
+        if (ne <= nan)
+            Main.assertTrue(false);
+        if (ne >= nan)
+            Main.assertTrue(false);
+        if (ne <= nan)
+            Main.assertTrue(false);
+        if (ne >= nan)
+            Main.assertTrue(false);
+        if (ne == nan)
+            Main.assertTrue(false);
+        if (ne != nan)
+            Main.assertTrue(true);
+        else
+            Main.assertTrue(false);
+
+        if (nan <= e)
+            Main.assertTrue(false);
+        if (nan >= e)
+            Main.assertTrue(false);
+        if (nan <= e)
+            Main.assertTrue(false);
+        if (nan >= e)
+            Main.assertTrue(false);
+        if (nan == e)
+            Main.assertTrue(false);
+        if (nan != e)
+            Main.assertTrue(true);
+        else
+            Main.assertTrue(false);
+
+        if (nan <= ne)
+            Main.assertTrue(false);
+        if (nan >= ne)
+            Main.assertTrue(false);
+        if (nan <= ne)
+            Main.assertTrue(false);
+        if (nan >= ne)
+            Main.assertTrue(false);
+        if (nan == ne)
+            Main.assertTrue(false);
+        if (nan != ne)
+            Main.assertTrue(true);
+        else
+            Main.assertTrue(false);
+    }
+
+    /*
+     * Test cmpl-double and cmpg-double.
+     */
     static void testDoubleCompare(double minus, double plus, double plus2,
         double nan) {
 
@@ -173,11 +249,83 @@ public class Compare {
             Main.assertTrue(false);
     }
 
+    /*
+     * Test cmpl-double and cmpg-double
+     * for a constant and NAN.
+     */
+    static void testDoubleCompareConstNan(double nan) {
+        final double e = 2.72;
+        final double ne = -e;
+        System.out.println("IntMath.testDoubleCompareConstNan");
+
+        if (e <= nan)
+            Main.assertTrue(false);
+        if (e >= nan)
+            Main.assertTrue(false);
+        if (e <= nan)
+            Main.assertTrue(false);
+        if (e >= nan)
+            Main.assertTrue(false);
+        if (e == nan)
+            Main.assertTrue(false);
+        if (e != nan)
+            Main.assertTrue(true);
+        else
+            Main.assertTrue(false);
+
+        if (ne <= nan)
+            Main.assertTrue(false);
+        if (ne >= nan)
+            Main.assertTrue(false);
+        if (ne <= nan)
+            Main.assertTrue(false);
+        if (ne >= nan)
+            Main.assertTrue(false);
+        if (ne == nan)
+            Main.assertTrue(false);
+        if (ne != nan)
+            Main.assertTrue(true);
+        else
+            Main.assertTrue(false);
+
+        if (nan <= e)
+            Main.assertTrue(false);
+        if (nan >= e)
+            Main.assertTrue(false);
+        if (nan <= e)
+            Main.assertTrue(false);
+        if (nan >= e)
+            Main.assertTrue(false);
+        if (nan == e)
+            Main.assertTrue(false);
+        if (nan != e)
+            Main.assertTrue(true);
+        else
+            Main.assertTrue(false);
+
+        if (nan <= ne)
+            Main.assertTrue(false);
+        if (nan >= ne)
+            Main.assertTrue(false);
+        if (nan <= ne)
+            Main.assertTrue(false);
+        if (nan >= ne)
+            Main.assertTrue(false);
+        if (nan == ne)
+            Main.assertTrue(false);
+        if (nan != ne)
+            Main.assertTrue(true);
+        else
+            Main.assertTrue(false);
+    }
+
     public static void run() {
         testIntCompare(-5, 4, 4, 0);
         testLongCompare(-5L, -4294967287L, 4L, 8L);
 
         testFloatCompare(-5.0f, 4.0f, 4.0f, (1.0f/0.0f) / (1.0f/0.0f));
+        testFloatCompareConstNan((1.0f/0.0f) / (1.0f/0.0f));
         testDoubleCompare(-5.0, 4.0, 4.0, (1.0/0.0) / (1.0/0.0));
+        testDoubleCompareConstNan((1.0/0.0) / (1.0/0.0));
     }
 }

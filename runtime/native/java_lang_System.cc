@@ -36,7 +36,7 @@ namespace art {
  */
 
 static void ThrowArrayStoreException_NotAnArray(const char* identifier, mirror::Object* array)
-    SHARED_REQUIRES(Locks::mutator_lock_) {
+    SHARED_LOCKS_REQUIRED(Locks::mutator_lock_) {
   std::string actualType(PrettyTypeOf(array));
   Thread* self = Thread::Current();
   self->ThrowNewExceptionF("Ljava/lang/ArrayStoreException;",
@@ -149,9 +149,7 @@ static void System_arraycopy(JNIEnv* env, jclass, jobject javaSrc, jint srcPos, 
     dstObjArray->AssignableMemcpy(dstPos, srcObjArray, srcPos, count);
     return;
   }
-  // This code is never run under a transaction.
-  DCHECK(!Runtime::Current()->IsActiveTransaction());
-  dstObjArray->AssignableCheckingMemcpy<false>(dstPos, srcObjArray, srcPos, count, true);
+  dstObjArray->AssignableCheckingMemcpy(dstPos, srcObjArray, srcPos, count, true);
 }
 
 // Template to convert general array to that of its specific primitive type.

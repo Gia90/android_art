@@ -135,8 +135,7 @@ public class FloatMath {
     static float[] floatOperTest(float x, float y) {
         System.out.println("FloatMath.floatOperTest");
 
-        float[] results = new float[10];
-        float tmp;
+        float[] results = new float[9];
 
         /* this seems to generate "op-float" instructions */
         results[0] = x + y;
@@ -146,21 +145,7 @@ public class FloatMath {
         results[4] = x % -y;
 
         /* this seems to generate "op-float/2addr" instructions */
-        tmp = x;
-        tmp += y;
-        results[5] = tmp;
-        tmp = x;
-        tmp -= y;
-        results[6] = tmp;
-        tmp = x;
-        tmp *= y;
-        results[7] = tmp;
-        tmp = x;
-        tmp /= y;
-        results[8] = tmp;
-        tmp = x;
-        tmp %= -y;
-        results[9] = tmp;
+        results[8] = x + (((((x + y) - y) * y) / y) % y);
 
         return results;
     }
@@ -170,11 +155,7 @@ public class FloatMath {
         Main.assertTrue(results[2] > -210000.01f && results[2] < -209999.99f);
         Main.assertTrue(results[3] > -23333.34f && results[3] < -23333.32f);
         Main.assertTrue(results[4] > 0.999f && results[4] < 1.001f);
-        Main.assertTrue(results[5] > 69996.99f && results[5] < 69997.01f);
-        Main.assertTrue(results[6] > 70002.99f && results[6] < 70003.01f);
-        Main.assertTrue(results[7] > -210000.01f && results[7] < -209999.99f);
-        Main.assertTrue(results[8] > -23333.34f && results[8] < -23333.32f);
-        Main.assertTrue(results[9] > 0.999f && results[9] < 1.001f);
+        Main.assertTrue(results[8] > 70000.99f && results[8] < 70001.01f);
     }
 
     /*
@@ -184,8 +165,7 @@ public class FloatMath {
     static double[] doubleOperTest(double x, double y) {
         System.out.println("FloatMath.doubleOperTest");
 
-        double[] results = new double[10];
-        double tmp;
+        double[] results = new double[9];
 
         /* this seems to generate "op-double" instructions */
         results[0] = x + y;
@@ -195,21 +175,7 @@ public class FloatMath {
         results[4] = x % -y;
 
         /* this seems to generate "op-double/2addr" instructions */
-        tmp = x;
-        tmp += y;
-        results[5] = tmp;
-        tmp = x;
-        tmp -= y;
-        results[6] = tmp;
-        tmp = x;
-        tmp *= y;
-        results[7] = tmp;
-        tmp = x;
-        tmp /= y;
-        results[8] = tmp;
-        tmp = x;
-        tmp %= -y;
-        results[9] = tmp;
+        results[8] = x + (((((x + y) - y) * y) / y) % y);
 
         return results;
     }
@@ -219,11 +185,7 @@ public class FloatMath {
         Main.assertTrue(results[2] > -210000.01 && results[2] < -209999.99);
         Main.assertTrue(results[3] > -23333.34 && results[3] < -23333.32);
         Main.assertTrue(results[4] > 0.999 && results[4] < 1.001);
-        Main.assertTrue(results[5] > 69996.99 && results[5] < 69997.01);
-        Main.assertTrue(results[6] > 70002.99 && results[6] < 70003.01);
-        Main.assertTrue(results[7] > -210000.01 && results[7] < -209999.99);
-        Main.assertTrue(results[8] > -23333.34 && results[8] < -23333.32);
-        Main.assertTrue(results[9] > 0.999 && results[9] < 1.001);
+        Main.assertTrue(results[8] > 70000.99 && results[8] < 70001.01);
     }
 
     /*
@@ -283,9 +245,10 @@ public class FloatMath {
     }
     static void checkConvF(float[] results) {
         System.out.println("FloatMath.checkConvF");
-        Main.assertTrue(results[0] == -2.0054409E9f);
-        Main.assertTrue(results[1] == -8.613303E18f);
-        Main.assertTrue(results[2] == -3.1415927f);
+        // TODO: Main.assertTrue values
+        for (int i = 0; i < results.length; i++)
+            System.out.println(" " + i + ": " + results[i]);
+        System.out.println("-2.0054409E9, -8.6133031E18, -3.1415927");
     }
 
     static double[] convD(int i, long l, float f) {
@@ -297,9 +260,10 @@ public class FloatMath {
     }
     static void checkConvD(double[] results) {
         System.out.println("FloatMath.checkConvD");
-        Main.assertTrue(results[0] == -2.005440939E9);
-        Main.assertTrue(results[1] == -8.6133032459203287E18);
-        Main.assertTrue(results[2] == 123.45600128173828);
+        // TODO: Main.assertTrue values
+        for (int i = 0; i < results.length; i++)
+            System.out.println(" " + i + ": " + results[i]);
+        System.out.println("-2.005440939E9, -8.6133032459203287E18, 123.4560012817382");
     }
 
     static void checkConsts() {

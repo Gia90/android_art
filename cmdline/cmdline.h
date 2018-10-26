@@ -80,7 +80,8 @@ static bool LocationToFilename(const std::string& location, InstructionSet isa,
   }
 }
 
-static Runtime* StartRuntime(const char* boot_image_location, InstructionSet instruction_set) {
+static Runtime* StartRuntime(const char* boot_image_location,
+                             InstructionSet instruction_set) {
   CHECK(boot_image_location != nullptr);
 
   RuntimeOptions options;
@@ -103,9 +104,7 @@ static Runtime* StartRuntime(const char* boot_image_location, InstructionSet ins
   options.push_back(
       std::make_pair("imageinstructionset",
                      reinterpret_cast<const void*>(GetInstructionSetString(instruction_set))));
-  // None of the command line tools need sig chain. If this changes we'll need
-  // to upgrade this option to a proper parameter.
-  options.push_back(std::make_pair("-Xno-sig-chain", nullptr));
+
   if (!Runtime::Create(options, false)) {
     fprintf(stderr, "Failed to create runtime\n");
     return nullptr;
@@ -164,7 +163,6 @@ struct CmdlineArgs {
 
         if (parse_status == kParseUnknownArgument) {
           fprintf(stderr, "Unknown argument %s\n", option.data());
-          parse_status = kParseOk;
         }
 
         if (parse_status != kParseOk) {
@@ -196,7 +194,6 @@ struct CmdlineArgs {
         "  --boot-image=<file.art>: provide the image location for the boot class path.\n"
         "      Do not include the arch as part of the name, it is added automatically.\n"
         "      Example: --boot-image=/system/framework/boot.art\n"
-        "               (specifies /system/framework/<arch>/boot.art as the image file)\n"
         "\n";
     usage += StringPrintf(  // Optional.
         "  --instruction-set=(arm|arm64|mips|mips64|x86|x86_64): for locating the image\n"

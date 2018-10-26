@@ -13,17 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+# Modified by Intel Corporation
+#
+#
 
-include art/build/Android.common_build.mk
+include $(VENDOR_ART_PATH)/build/Android.common_build.mk
 
-ART_CPPLINT := $(LOCAL_PATH)/tools/cpplint.py
-ART_CPPLINT_FILTER := --filter=-whitespace/line_length,-build/include,-readability/function,-readability/streams,-readability/todo,-runtime/references,-runtime/sizeof,-runtime/threadsafe_fn,-runtime/printf
-ART_CPPLINT_FLAGS := --quiet
-# This:
-#  1) Gets a list of all .h & .cc files in the art directory.
-#  2) Prepends 'art/' to each of them to make the full name.
-#  3) removes art/runtime/elf.h from the list.
-ART_CPPLINT_SRC := $(filter-out $(LOCAL_PATH)/runtime/elf.h, $(addprefix $(LOCAL_PATH)/, $(call all-subdir-named-files,*.h) $(call all-subdir-named-files,*$(ART_CPP_EXTENSION))))
+ART_CPPLINT := $(VENDOR_ART_PATH)/tools/cpplint.py
+ART_CPPLINT_FILTER := --filter=-whitespace/line_length,-build/include,-readability/function,-readability/streams,-readability/todo,-runtime/references,-runtime/sizeof,-runtime/threadsafe_fn,-runtime/printf,-build/header_guard
+ART_CPPLINT_SRC := $(shell find $(VENDOR_ART_PATH) -name "*.h" -o -name "*$(ART_CPP_EXTENSION)" | grep -v compiler/llvm/generated/ | grep -v runtime/elf\.h | grep -v compiler/dex/quick/extension/)
 
 # "mm cpplint-art" to verify we aren't regressing
 .PHONY: cpplint-art
@@ -43,9 +41,9 @@ define declare-art-cpplint-target
 art_cpplint_file := $(1)
 art_cpplint_touch := $$(OUT_CPPLINT)/$$(subst /,__,$$(art_cpplint_file))
 
-$$(art_cpplint_touch): $$(art_cpplint_file) $(ART_CPPLINT) art/build/Android.cpplint.mk
-	$(hide) $(ART_CPPLINT) $(ART_CPPLINT_FLAGS) $(ART_CPPLINT_FILTER) $$<
-	$(hide) mkdir -p $$(dir $$@)
+$$(art_cpplint_touch): $$(art_cpplint_file) $(ART_CPPLINT) $(VENDOR_ART_PATH)/build/Android.cpplint.mk
+	$(hide) $(ART_CPPLINT) $(ART_CPPLINT_FILTER) $$<
+	@mkdir -p $$(dir $$@)
 	$(hide) touch $$@
 
 ART_CPPLINT_TARGETS += $$(art_cpplint_touch)

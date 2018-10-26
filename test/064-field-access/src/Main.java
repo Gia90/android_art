@@ -16,7 +16,6 @@
 
 import other.PublicClass;
 import java.lang.reflect.Field;
-import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 
 /*
@@ -35,20 +34,6 @@ public class Main {
     } catch (NoSuchFieldError nsfe) {
       // reference
       System.out.println("Got expected failure");
-    }
-
-    try {
-      Class c = Class.forName("SubClassUsingInaccessibleField");
-      Object o = c.newInstance();
-      c.getMethod("test").invoke(o, null);
-    } catch (InvocationTargetException ite) {
-      if (ite.getCause() instanceof IllegalAccessError) {
-        System.out.println("Got expected failure");
-      } else {
-        System.out.println("Got unexpected failure " + ite.getCause());
-      }
-    } catch (Exception e) {
-      System.out.println("Got unexpected failure " + e);
     }
   }
 

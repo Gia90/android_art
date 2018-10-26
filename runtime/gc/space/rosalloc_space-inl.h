@@ -17,9 +17,8 @@
 #ifndef ART_RUNTIME_GC_SPACE_ROSALLOC_SPACE_INL_H_
 #define ART_RUNTIME_GC_SPACE_ROSALLOC_SPACE_INL_H_
 
-#include "base/memory_tool.h"
 #include "gc/allocator/rosalloc-inl.h"
-#include "gc/space/memory_tool_settings.h"
+#include "gc/space/valgrind_settings.h"
 #include "rosalloc_space.h"
 #include "thread.h"
 
@@ -27,26 +26,26 @@ namespace art {
 namespace gc {
 namespace space {
 
-template<bool kMaybeIsRunningOnMemoryTool>
+template<bool kMaybeRunningOnValgrind>
 inline size_t RosAllocSpace::AllocationSizeNonvirtual(mirror::Object* obj, size_t* usable_size) {
   // obj is a valid object. Use its class in the header to get the size.
   // Don't use verification since the object may be dead if we are sweeping.
   size_t size = obj->SizeOf<kVerifyNone>();
-  bool add_redzones = false;
-  if (kMaybeIsRunningOnMemoryTool) {
-    add_redzones = RUNNING_ON_MEMORY_TOOL ? kMemoryToolAddsRedzones : 0;
-    if (add_redzones) {
-      size += 2 * kDefaultMemoryToolRedZoneBytes;
+  bool running_on_valgrind = false;
+  if (kMaybeRunningOnValgrind) {
+    running_on_valgrind = RUNNING_ON_VALGRIND != 0;
+    if (running_on_valgrind) {
+      size += 2 * kDefaultValgrindRedZoneBytes;
     }
   } else {
-    DCHECK_EQ(RUNNING_ON_MEMORY_TOOL, 0U);
+    DCHECK_EQ(RUNNING_ON_VALGRIND, 0U);
   }
   size_t size_by_size = rosalloc_->UsableSize(size);
   if (kIsDebugBuild) {
-    // On memory tool, the red zone has an impact...
+    // On valgrind, the red zone has an impact...
     const uint8_t* obj_ptr = reinterpret_cast<const uint8_t*>(obj);
     size_t size_by_ptr = rosalloc_->UsableSize(
-        obj_ptr - (add_redzones ? kDefaultMemoryToolRedZoneBytes : 0));
+        obj_ptr - (running_on_valgrind ? kDefaultValgrindRedZoneBytes : 0));
     if (size_by_size != size_by_ptr) {
       LOG(INFO) << "Found a bad sized obj of size " << size
                 << " at " << std::hex << reinterpret_cast<intptr_t>(obj_ptr) << std::dec
@@ -100,6 +99,13 @@ inline mirror::Object* RosAllocSpace::AllocThreadLocal(Thread* self, size_t num_
   DCHECK(bytes_allocated != nullptr);
   return reinterpret_cast<mirror::Object*>(
       rosalloc_->AllocFromThreadLocalRun(self, num_bytes, bytes_allocated));
+}
+
+inline bool RosAllocSpace::FreeThreadLocal(Thread* self, size_t num_bytes,
+                                                      mirror::Object* obj) {
+  DCHECK_GT(num_bytes, 0u);
+  return rosalloc_->FreeFromThreadLocalRun(self, num_bytes,
+                                           reinterpret_cast<void*>(obj));
 }
 
 inline size_t RosAllocSpace::MaxBytesBulkAllocatedForNonvirtual(size_t num_bytes) {

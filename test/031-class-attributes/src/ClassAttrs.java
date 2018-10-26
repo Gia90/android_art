@@ -1,7 +1,6 @@
 import otherpackage.OtherPackageClass;
 
 import java.io.Serializable;
-import java.lang.reflect.AbstractMethod;
 import java.lang.reflect.AccessibleObject;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
@@ -222,11 +221,8 @@ public class ClassAttrs {
     public static String getSignatureAttribute(Object obj) {
         Method method;
         try {
-            Class c = obj.getClass();
-            if (c == Method.class || c == Constructor.class) {
-              c = AbstractMethod.class;
-            }
-            method = c.getDeclaredMethod("getSignatureAttribute");
+            Class c = Class.forName("libcore.reflect.AnnotationAccess");
+            method = c.getDeclaredMethod("getSignature", java.lang.reflect.AnnotatedElement.class);
             method.setAccessible(true);
         } catch (Exception ex) {
             ex.printStackTrace();
@@ -234,7 +230,7 @@ public class ClassAttrs {
         }
 
         try {
-            return (String) method.invoke(obj);
+            return (String) method.invoke(null, obj);
         } catch (IllegalAccessException ex) {
             throw new RuntimeException(ex);
         } catch (InvocationTargetException ex) {

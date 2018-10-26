@@ -12,6 +12,9 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Modified by Intel Corporation
+ *
  */
 
 #ifndef ART_PATCHOAT_PATCHOAT_H_
@@ -23,10 +26,8 @@
 #include "elf_file.h"
 #include "elf_utils.h"
 #include "gc/accounting/space_bitmap.h"
-#include "gc/space/image_space.h"
 #include "gc/heap.h"
 #include "os.h"
-#include "runtime.h"
 
 namespace art {
 
@@ -46,36 +47,36 @@ class PatchOat {
   // Patch only the oat file
   static bool Patch(File* oat_in, off_t delta, File* oat_out, TimingLogger* timings,
                     bool output_oat_opened_from_fd,  // Was this using --oatput-oat-fd ?
-                    bool new_oat_out);               // Output oat was a new file created by us?
+                    bool new_oat_out,                // Output oat was a new file created by us?
+                    bool input_oat_filename_dummy);  // Input cannot be symlinked
 
   // Patch only the image (art file)
   static bool Patch(const std::string& art_location, off_t delta, File* art_out, InstructionSet isa,
                     TimingLogger* timings);
 
   // Patch both the image and the oat file
-  static bool Patch(const std::string& art_location,
-                    off_t delta,
-                    const std::string& output_directory,
-                    InstructionSet isa,
-                    TimingLogger* timings);
-
-  ~PatchOat() {}
-  PatchOat(PatchOat&&) = default;
+  static bool Patch(File* oat_in, const std::string& art_location,
+                    off_t delta, File* oat_out, File* art_out, InstructionSet isa,
+                    TimingLogger* timings,
+                    bool output_oat_opened_from_fd,  // Was this using --oatput-oat-fd ?
+                    bool new_oat_out,                // Output oat was a new file created by us?
+                    bool input_oat_filename_dummy);  // Input cannot be symlinked
 
  private:
   // Takes ownership only of the ElfFile. All other pointers are only borrowed.
   PatchOat(ElfFile* oat_file, off_t delta, TimingLogger* timings)
       : oat_file_(oat_file), image_(nullptr), bitmap_(nullptr), heap_(nullptr), delta_(delta),
-        isa_(kNone), space_map_(nullptr), timings_(timings) {}
+        isa_(kNone), timings_(timings) {}
   PatchOat(InstructionSet isa, MemMap* image, gc::accounting::ContinuousSpaceBitmap* bitmap,
            MemMap* heap, off_t delta, TimingLogger* timings)
       : image_(image), bitmap_(bitmap), heap_(heap),
-        delta_(delta), isa_(isa), space_map_(nullptr), timings_(timings) {}
+        delta_(delta), isa_(isa), timings_(timings) {}
   PatchOat(InstructionSet isa, ElfFile* oat_file, MemMap* image,
            gc::accounting::ContinuousSpaceBitmap* bitmap, MemMap* heap, off_t delta,
-           std::map<gc::space::ImageSpace*, std::unique_ptr<MemMap>>* map, TimingLogger* timings)
+           TimingLogger* timings)
       : oat_file_(oat_file), image_(image), bitmap_(bitmap), heap_(heap),
-        delta_(delta), isa_(isa), space_map_(map), timings_(timings) {}
+        delta_(delta), isa_(isa), timings_(timings) {}
+  ~PatchOat() {}
 
   // Was the .art image at image_path made with --compile-pic ?
   static bool IsImagePic(const ImageHeader& image_header, const std::string& image_path);
@@ -92,20 +93,24 @@ class PatchOat {
 
   // Attempt to replace the file with a symlink
   // Returns false if it fails
-  static bool ReplaceOatFileWithSymlink(const std::string& input_oat_filename,
-                                        const std::string& output_oat_filename,
-                                        bool output_oat_opened_from_fd,
-                                        bool new_oat_out);  // Output oat was newly created?
+  static bool SymlinkOrCopy(File* input_oat,
+                            File* output_oat,
+                            bool output_oat_opened_from_fd,
+                            bool new_oat_out,  // Output oat was newly created?
+                            bool make_copy);
 
   static void BitmapCallback(mirror::Object* obj, void* arg)
-      SHARED_REQUIRES(Locks::mutator_lock_) {
+      SHARED_LOCKS_REQUIRED(Locks::mutator_lock_) {
     reinterpret_cast<PatchOat*>(arg)->VisitObject(obj);
   }
 
   void VisitObject(mirror::Object* obj)
-      SHARED_REQUIRES(Locks::mutator_lock_);
+      SHARED_LOCKS_REQUIRED(Locks::mutator_lock_);
   void FixupMethod(ArtMethod* object, ArtMethod* copy)
-      SHARED_REQUIRES(Locks::mutator_lock_);
+      SHARED_LOCKS_REQUIRED(Locks::mutator_lock_);
+  void FixupNativePointerArray(mirror::PointerArray* object)
+      SHARED_LOCKS_REQUIRED(Locks::mutator_lock_);
+  bool InHeap(mirror::Object*);
 
   // Patches oat in place, modifying the oat_file given to the constructor.
   bool PatchElf();
@@ -114,18 +119,13 @@ class PatchOat {
   template <typename ElfFileImpl>
   bool PatchOatHeader(ElfFileImpl* oat_file);
 
-  bool PatchImage(bool primary_image) SHARED_REQUIRES(Locks::mutator_lock_);
-  void PatchArtFields(const ImageHeader* image_header) SHARED_REQUIRES(Locks::mutator_lock_);
-  void PatchArtMethods(const ImageHeader* image_header) SHARED_REQUIRES(Locks::mutator_lock_);
-  void PatchImTables(const ImageHeader* image_header) SHARED_REQUIRES(Locks::mutator_lock_);
-  void PatchImtConflictTables(const ImageHeader* image_header)
-      SHARED_REQUIRES(Locks::mutator_lock_);
+  bool PatchImage() SHARED_LOCKS_REQUIRED(Locks::mutator_lock_);
+  void PatchArtFields(const ImageHeader* image_header) SHARED_LOCKS_REQUIRED(Locks::mutator_lock_);
+  void PatchArtMethods(const ImageHeader* image_header) SHARED_LOCKS_REQUIRED(Locks::mutator_lock_);
   void PatchInternedStrings(const ImageHeader* image_header)
-      SHARED_REQUIRES(Locks::mutator_lock_);
-  void PatchClassTable(const ImageHeader* image_header)
-      SHARED_REQUIRES(Locks::mutator_lock_);
+      SHARED_LOCKS_REQUIRED(Locks::mutator_lock_);
   void PatchDexFileArrays(mirror::ObjectArray<mirror::Object>* img_roots)
-      SHARED_REQUIRES(Locks::mutator_lock_);
+      SHARED_LOCKS_REQUIRED(Locks::mutator_lock_);
 
   bool WriteElf(File* out);
   bool WriteImage(File* out);
@@ -141,24 +141,6 @@ class PatchOat {
         reinterpret_cast<uintptr_t>(obj) - reinterpret_cast<uintptr_t>(heap_->Begin());
     DCHECK_LT(heap_off, image_->Size());
     return reinterpret_cast<T*>(image_->Begin() + heap_off);
-  }
-
-  template <typename T>
-  T* RelocatedCopyOfFollowImages(T* obj) const {
-    if (obj == nullptr) {
-      return nullptr;
-    }
-    // Find ImageSpace this belongs to.
-    auto image_spaces = Runtime::Current()->GetHeap()->GetBootImageSpaces();
-    for (gc::space::ImageSpace* image_space : image_spaces) {
-      if (image_space->Contains(obj)) {
-        uintptr_t heap_off = reinterpret_cast<uintptr_t>(obj) -
-                             reinterpret_cast<uintptr_t>(image_space->GetMemMap()->Begin());
-        return reinterpret_cast<T*>(space_map_->find(image_space)->second->Begin() + heap_off);
-      }
-    }
-    LOG(FATAL) << "Did not find object in boot image space " << obj;
-    UNREACHABLE();
   }
 
   template <typename T>
@@ -187,6 +169,13 @@ class PatchOat {
     return ret;
   }
 
+  // Look up the oat header from any elf file.
+  static const OatHeader* GetOatHeader(const ElfFile* elf_file);
+
+  // Templatized version to actually look up the oat header
+  template <typename ElfFileImpl>
+  static const OatHeader* GetOatHeader(const ElfFileImpl* elf_file);
+
   // Walks through the old image and patches the mmap'd copy of it to the new offset. It does not
   // change the heap.
   class PatchVisitor {
@@ -194,15 +183,10 @@ class PatchOat {
     PatchVisitor(PatchOat* patcher, mirror::Object* copy) : patcher_(patcher), copy_(copy) {}
     ~PatchVisitor() {}
     void operator() (mirror::Object* obj, MemberOffset off, bool b) const
-        REQUIRES(Locks::mutator_lock_, Locks::heap_bitmap_lock_);
+      EXCLUSIVE_LOCKS_REQUIRED(Locks::mutator_lock_, Locks::heap_bitmap_lock_);
     // For reference classes.
     void operator() (mirror::Class* cls, mirror::Reference* ref) const
-        REQUIRES(Locks::mutator_lock_, Locks::heap_bitmap_lock_);
-    // TODO: Consider using these for updating native class roots?
-    void VisitRootIfNonNull(mirror::CompressedReference<mirror::Object>* root ATTRIBUTE_UNUSED)
-        const {}
-    void VisitRoot(mirror::CompressedReference<mirror::Object>* root ATTRIBUTE_UNUSED) const {}
-
+      EXCLUSIVE_LOCKS_REQUIRED(Locks::mutator_lock_, Locks::heap_bitmap_lock_);
   private:
     PatchOat* const patcher_;
     mirror::Object* const copy_;
@@ -221,14 +205,9 @@ class PatchOat {
   // Active instruction set, used to know the entrypoint size.
   const InstructionSet isa_;
 
-  const std::map<gc::space::ImageSpace*, std::unique_ptr<MemMap>>* space_map_;
-
   TimingLogger* timings_;
 
   friend class FixupRootVisitor;
-  friend class RelocatedPointerVisitor;
-  friend class PatchOatArtFieldVisitor;
-  friend class PatchOatArtMethodVisitor;
   DISALLOW_IMPLICIT_CONSTRUCTORS(PatchOat);
 };
 

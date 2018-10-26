@@ -20,7 +20,6 @@
 #include "runtime.h"
 
 #include "art_method.h"
-#include "class_linker.h"
 #include "read_barrier-inl.h"
 
 namespace art {
@@ -67,13 +66,13 @@ inline ArtMethod* Runtime::GetImtUnimplementedMethod() {
 }
 
 inline ArtMethod* Runtime::GetCalleeSaveMethod(CalleeSaveType type)
-    SHARED_REQUIRES(Locks::mutator_lock_) {
+    SHARED_LOCKS_REQUIRED(Locks::mutator_lock_) {
   DCHECK(HasCalleeSaveMethod(type));
   return GetCalleeSaveMethodUnchecked(type);
 }
 
 inline ArtMethod* Runtime::GetCalleeSaveMethodUnchecked(CalleeSaveType type)
-    SHARED_REQUIRES(Locks::mutator_lock_) {
+    SHARED_LOCKS_REQUIRED(Locks::mutator_lock_) {
   return reinterpret_cast<ArtMethod*>(callee_save_methods_[type]);
 }
 

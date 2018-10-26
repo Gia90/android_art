@@ -18,15 +18,5 @@
  * Version with package scope access.
  */
 public class SemiPrivate {
-    /* not private */ static String mStaticPrivvy = "stuff";
-
-    /* not private */ static String privvyStaticMethod() {
-      return "stuff";
-    }
-
-    /* not private */ String mInstancePrivvy = "stuff";
-
-    /* not private */ String privvyInstanceMethod() {
-      return "stuff";
-    }
+    /* not private */ static String mPrivvy = "stuff";
 }

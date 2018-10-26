@@ -20,7 +20,6 @@
 #include "reg_type.h"
 
 #include "base/casts.h"
-#include "base/scoped_arena_allocator.h"
 #include "mirror/class.h"
 
 namespace art {
@@ -93,10 +92,6 @@ inline bool RegType::AssignableFrom(const RegType& lhs, const RegType& rhs, bool
         return true;  // All reference types can be assigned null.
       } else if (!rhs.IsReferenceTypes()) {
         return false;  // Expect rhs to be a reference type.
-      } else if (lhs.IsUninitializedTypes() || rhs.IsUninitializedTypes()) {
-        // Uninitialized types are only allowed to be assigned to themselves.
-        // TODO: Once we have a proper "reference" super type, this needs to be extended.
-        return false;
       } else if (lhs.IsJavaLangObject()) {
         return true;  // All reference types can be assigned to Object.
       } else if (!strict && !lhs.IsUnresolvedTypes() && lhs.GetClass()->IsInterface()) {
@@ -183,10 +178,6 @@ inline const ConflictType* ConflictType::GetInstance() {
 inline const UndefinedType* UndefinedType::GetInstance() {
   DCHECK(instance_ != nullptr);
   return instance_;
-}
-
-inline void* RegType::operator new(size_t size, ScopedArenaAllocator* arena) {
-  return arena->Alloc(size, kArenaAllocMisc);
 }
 
 }  // namespace verifier

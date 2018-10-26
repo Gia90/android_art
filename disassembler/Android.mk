@@ -13,10 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+# Modified by Intel Corporation
+#
+#
 
 LOCAL_PATH := $(call my-dir)
 
-include art/build/Android.common_build.mk
+include $(VENDOR_ART_PATH)/build/Android.common_build.mk
 
 LIBART_DISASSEMBLER_SRC_FILES := \
 	disassembler.cc \
@@ -59,13 +62,12 @@ define build-libart-disassembler
   LOCAL_SRC_FILES := $$(LIBART_DISASSEMBLER_SRC_FILES)
 
   ifeq ($$(art_target_or_host),target)
-    $(call set-target-local-clang-vars)
-    $(call set-target-local-cflags-vars,$(2))
+  	$(call set-target-local-clang-vars)
+  	$(call set-target-local-cflags-vars,$(2))
   else # host
     LOCAL_CLANG := $(ART_HOST_CLANG)
     LOCAL_LDLIBS := $(ART_HOST_LDLIBS)
     LOCAL_CFLAGS += $(ART_HOST_CFLAGS)
-    LOCAL_ASFLAGS += $(ART_HOST_ASFLAGS)
     ifeq ($$(art_ndebug_or_debug),debug)
       LOCAL_CFLAGS += $(ART_HOST_DEBUG_CFLAGS)
     else
@@ -80,16 +82,16 @@ define build-libart-disassembler
     LOCAL_SHARED_LIBRARIES += libart
   endif
 
-  LOCAL_C_INCLUDES += $(ART_C_INCLUDES) art/runtime
+  LOCAL_C_INCLUDES += $(ART_C_INCLUDES) $(VENDOR_ART_PATH)/runtime
   LOCAL_EXPORT_C_INCLUDE_DIRS := $(LOCAL_PATH)
   LOCAL_MULTILIB := both
 
-  LOCAL_ADDITIONAL_DEPENDENCIES := art/build/Android.common_build.mk
+  LOCAL_ADDITIONAL_DEPENDENCIES := $(VENDOR_ART_PATH)/build/Android.common_build.mk
   LOCAL_ADDITIONAL_DEPENDENCIES += $(LOCAL_PATH)/Android.mk
   LOCAL_NATIVE_COVERAGE := $(ART_COVERAGE)
   # For disassembler_arm64.
   ifeq ($$(art_ndebug_or_debug),debug)
-     LOCAL_SHARED_LIBRARIES += libvixl
+     LOCAL_SHARED_LIBRARIES += libvixld
   else
      LOCAL_SHARED_LIBRARIES += libvixl
   endif
